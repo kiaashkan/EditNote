@@ -127,4 +127,3 @@ to support its development, you can donate here:
 UQB6Wphj-CHN1kSwU5fzgMUval6SdJljEhX-52q5qP-yKbTg
 ```
 
-Thank you! ❤️
