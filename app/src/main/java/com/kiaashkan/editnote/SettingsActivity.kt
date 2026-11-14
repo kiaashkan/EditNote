@@ -47,8 +47,11 @@ class SettingsActivity : Activity() {
         findViewById<LinearLayout>(R.id.aboutGithub).setOnClickListener {
             openUrl("https://github.com/kiaashkan")
         }
-        findViewById<LinearLayout>(R.id.aboutRepo).setOnClickListener {
-            openUrl("https://github.com/kiaashkan/EditNote")
+        // Update row (KiA, item 21): EditNote keeps ZERO permissions, so
+        // updating opens the latest GitHub release in the browser instead
+        // of downloading in-app.
+        findViewById<LinearLayout>(R.id.aboutUpdate).setOnClickListener {
+            openUrl("https://github.com/kiaashkan/EditNote/releases/latest")
         }
 
         // Theme

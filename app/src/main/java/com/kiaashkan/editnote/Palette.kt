@@ -47,5 +47,16 @@ class Palette(context: Context) {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 10f * density
             setColor(if (selected) accent else alt)
+            if (!selected) {
+                // A hairline outline keeps inactive tabs crisp on the
+                // header background (KiA, item 22 tab polish).
+                setStroke(
+                    (1 * density).toInt(),
+                    Color.argb(
+                        70, Color.red(textSecondary),
+                        Color.green(textSecondary), Color.blue(textSecondary)
+                    )
+                )
+            }
         }
 }

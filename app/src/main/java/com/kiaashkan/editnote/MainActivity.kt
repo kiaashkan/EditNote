@@ -14,8 +14,8 @@ import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import com.kiaashkan.editnote.data.AppSettings
@@ -83,7 +83,30 @@ class MainActivity : Activity() {
             startActivity(EditorActivity.restoreIntent(this))
         }
 
-        findViewById<ImageButton>(R.id.btnMainMenu).setOnClickListener { showMainMenu(it) }
+        // KiA (item 24): three direct icon buttons instead of one ⋮ menu —
+        // sort (tinted with the accent while A–Z sorting is on), reset
+        // list, and settings.
+        val sortBtn = findViewById<ImageButton>(R.id.btnHomeSort)
+        fun refreshSortTint() {
+            sortBtn.setColorFilter(
+                if (AppSettings(this).sortByName) palette.accent else palette.textPrimary
+            )
+        }
+        refreshSortTint()
+        sortBtn.setOnClickListener {
+            val s = AppSettings(this)
+            s.sortByName = !s.sortByName
+            refreshSortTint()
+            refresh()
+        }
+        findViewById<ImageButton>(R.id.btnHomeReset).setOnClickListener {
+            recents.clear()
+            refresh()
+            Toast.makeText(this, "Recent list cleared (bookmarks kept)", Toast.LENGTH_SHORT).show()
+        }
+        findViewById<ImageButton>(R.id.btnHomeSettings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         refresh()
     }
 
@@ -107,33 +130,6 @@ class MainActivity : Activity() {
             .getString("docs", "")?.isNotBlank() == true
         resumeButton.visibility =
             if (hasSession && AppSettings(this).resumeSession) View.VISIBLE else View.GONE
-    }
-
-    private fun showMainMenu(anchor: View) {
-        val menu = PopupMenu(this, anchor)
-        menu.menu.add(0, MENU_SORT, 0, "Sort A–Z by name").apply {
-            isCheckable = true
-            isChecked = AppSettings(this@MainActivity).sortByName
-        }
-        menu.menu.add(0, MENU_CLEAR, 1, "Clear recent list")
-        menu.menu.add(0, MENU_SETTINGS, 2, "Settings")
-        menu.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                MENU_SORT -> {
-                    val s = AppSettings(this)
-                    s.sortByName = !s.sortByName
-                    refresh()
-                }
-                MENU_CLEAR -> {
-                    recents.clear()
-                    refresh()
-                    Toast.makeText(this, "Recent list cleared (bookmarks kept)", Toast.LENGTH_SHORT).show()
-                }
-                MENU_SETTINGS -> startActivity(Intent(this, SettingsActivity::class.java))
-            }
-            true
-        }
-        menu.show()
     }
 
     private var speedDialOpen = false
@@ -202,18 +198,95 @@ class MainActivity : Activity() {
         if (speedDialOpen) closeSpeedDial() else super.onBackPressed()
     }
 
+    /** Modern card dialog for the new-file name (KiA, item 22: the stock
+     *  AlertDialog looked cheap, with the input clipped at the edge). */
     private fun promptNewFile() {
-        val input = EditText(this).apply { hint = "File name (e.g. ideas.txt)" }
-        AlertDialog.Builder(this)
-            .setTitle("New file")
-            .setMessage("You will choose where to save it.")
-            .setView(input)
-            .setPositiveButton("Create") { _, _ ->
-                val name = input.text.toString().trim().ifEmpty { "Untitled" }
-                startActivity(EditorActivity.newDocIntent(this, name))
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val input = EditText(this).apply {
+            hint = "File name (e.g. ideas.txt)"
+            isSingleLine = true
+            setTextColor(palette.textPrimary)
+            setHintTextColor(palette.textSecondary)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = 12f * density
+                setColor(palette.card)
+                setStroke(dp(1), palette.accent)
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = palette.cardDrawable(20f, density)
+            setPadding(dp(22), dp(20), dp(22), dp(16))
+            addView(TextView(this@MainActivity).apply {
+                text = "New file"
+                textSize = 19f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(palette.textPrimary)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "You will choose where to save it."
+                textSize = 14f
+                setTextColor(palette.textSecondary)
+                setPadding(0, dp(4), 0, dp(14))
+            })
+            addView(input)
+            val buttons = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.END
+                setPadding(0, dp(16), 0, 0)
+            }
+            addView(buttons)
+            tag = buttons
+        }
+        val dialog = android.app.Dialog(this)
+        dialog.setContentView(card)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.88).toInt(),
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
+        val buttons = card.tag as LinearLayout
+        buttons.addView(TextView(this).apply {
+            text = "Cancel"
+            textSize = 15f
+            setTextColor(palette.textPrimary)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setOnClickListener { dialog.dismiss() }
+        })
+        buttons.addView(TextView(this).apply {
+            text = "Create"
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(palette.onAccent)
+            background = palette.let {
+                android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    cornerRadius = 20f * density
+                    setColor(palette.accent)
+                }
+            }
+            setPadding(dp(20), dp(10), dp(20), dp(10))
+            setOnClickListener {
+                val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                dialog.dismiss()
+                startActivity(EditorActivity.newDocIntent(this@MainActivity, name))
+            }
+        })
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                dialog.dismiss()
+                startActivity(EditorActivity.newDocIntent(this@MainActivity, name))
+                true
+            } else false
+        }
+        dialog.show()
+        input.requestFocus()
     }
 
     private fun showEntryActions(entry: RecentFiles.Entry) {
@@ -310,8 +383,5 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_OPEN = 1001
-        private const val MENU_SORT = 4
-        private const val MENU_CLEAR = 5
-        private const val MENU_SETTINGS = 3
     }
 }

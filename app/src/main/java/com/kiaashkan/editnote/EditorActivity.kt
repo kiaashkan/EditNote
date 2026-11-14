@@ -457,7 +457,12 @@ class EditorActivity : Activity() {
                     text = (if (doc.dirty) "• " else "") +
                         doc.name.removeSuffix(".txt")
                     textSize = 13.5f
-                    setTextColor(fg)
+                    if (isActive) {
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    }
+                    setTextColor(
+                        if (isActive) fg else palette.textSecondary
+                    )
                     isSingleLine = true
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     maxWidth = (170 * density).toInt()
@@ -825,90 +830,126 @@ class EditorActivity : Activity() {
     // and an Options menu (⋮). Every action from the old single menu
     // exists in exactly one of the three.
 
+    /** One row of the card popup menu; [checked] null = plain row. */
+    private class MenuRow(
+        val label: String,
+        val checked: Boolean? = null,
+        val action: () -> Unit
+    )
+
+    /** Modern card popup menu (KiA, item 23: the stock PopupMenu looked
+     *  dated). Same items, drawn on a rounded card that follows the app
+     *  palette, with accent check marks and row ripples. */
+    private fun showCardMenu(anchor: View, rows: List<MenuRow>) {
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = palette.cardDrawable(14f, density)
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        val popup = android.widget.PopupWindow(
+            container, dp(248),
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true
+        )
+        popup.elevation = 8f * density
+        popup.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        val ripple = android.util.TypedValue()
+        theme.resolveAttribute(
+            android.R.attr.selectableItemBackground, ripple, true
+        )
+        rows.forEach { row ->
+            val rowView = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setBackgroundResource(ripple.resourceId)
+                setPadding(dp(16), dp(11), dp(16), dp(11))
+                addView(TextView(this@EditorActivity).apply {
+                    text = row.label
+                    textSize = 15f
+                    setTextColor(palette.textPrimary)
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                })
+                if (row.checked != null) {
+                    addView(TextView(this@EditorActivity).apply {
+                        text = if (row.checked) "✓" else ""
+                        textSize = 16f
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setTextColor(palette.accent)
+                    })
+                }
+                setOnClickListener {
+                    popup.dismiss()
+                    row.action()
+                }
+            }
+            container.addView(rowView)
+        }
+        popup.showAsDropDown(anchor, 0, dp(4))
+    }
+
     /** File menu: everything about the document as a file. */
     private fun showFileMenu(anchor: View) {
-        val menu = PopupMenu(this, anchor)
-        menu.menu.add(0, M_NEW_TAB, 0, "New")
-        menu.menu.add(0, M_OPEN_FILE, 1, "Open…")
-        menu.menu.add(0, M_SAVE, 2, "Save")
-        menu.menu.add(0, M_SAVE_AS, 3, "Save as…")
-        menu.menu.add(0, M_RELOAD, 4, "Reload")
-        menu.menu.add(0, M_CLOSE_TAB, 5, "Close tab")
-        menu.menu.add(0, M_SHARE, 6, "Share")
-        menu.menu.add(0, M_PRINT, 7, "Print")
-        menu.menu.add(0, M_SETTINGS, 8, "Settings")
-        menu.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                M_NEW_TAB -> addDoc(newDraftDoc("Untitled"))
-                M_OPEN_FILE -> pickExternalFile()
-                M_SAVE -> onSavePressed()
-                M_SAVE_AS -> promptSaveAs()
-                M_RELOAD -> reloadActive()
-                M_CLOSE_TAB -> closeTab(active)
-                M_SHARE -> shareText()
-                M_PRINT -> printActive()
-                M_SETTINGS -> startActivity(Intent(this, SettingsActivity::class.java))
-            }
-            true
-        }
-        menu.show()
+        showCardMenu(
+            anchor,
+            listOf(
+                MenuRow("New") { addDoc(newDraftDoc("Untitled")) },
+                MenuRow("Open…") { pickExternalFile() },
+                MenuRow("Save") { onSavePressed() },
+                MenuRow("Save as…") { promptSaveAs() },
+                MenuRow("Reload") { reloadActive() },
+                MenuRow("Close tab") { closeTab(active) },
+                MenuRow("Share") { shareText() },
+                MenuRow("Print") { printActive() },
+                MenuRow("Settings") {
+                    startActivity(Intent(this, SettingsActivity::class.java))
+                }
+            )
+        )
     }
 
     /** Edit menu: everything that acts on the text. */
     private fun showEditMenu(anchor: View) {
-        val menu = PopupMenu(this, anchor)
-        menu.menu.add(0, M_SELECT_ALL, 0, "Select all")
-        menu.menu.add(0, M_PASTE, 1, "Paste")
-        menu.menu.add(0, M_INSERT_TIME, 2, "Insert date & time")
-        menu.menu.add(0, M_INDENT, 3, "Increase indent")
-        menu.menu.add(0, M_OUTDENT, 4, "Decrease indent")
-        menu.menu.add(0, M_GOTO, 5, "Go to line…")
-        menu.menu.add(0, M_REPLACE, 6, "Find & Replace…")
-        menu.menu.add(0, M_STATS, 7, "Statistics")
-        menu.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                M_SELECT_ALL -> editor.selectAll()
-                M_PASTE -> pasteFromClipboard()
-                M_INSERT_TIME -> insertAtCursor(
-                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
-                )
-                M_INDENT -> changeIndent(increase = true)
-                M_OUTDENT -> changeIndent(increase = false)
-                M_GOTO -> promptGoToLine()
-                M_REPLACE -> promptReplace()
-                M_STATS -> showStats()
-            }
-            true
-        }
-        menu.show()
+        showCardMenu(
+            anchor,
+            listOf(
+                MenuRow("Select all") { editor.selectAll() },
+                MenuRow("Paste") { pasteFromClipboard() },
+                MenuRow("Insert date & time") {
+                    insertAtCursor(
+                        SimpleDateFormat(
+                            "yyyy-MM-dd HH:mm", Locale.getDefault()
+                        ).format(Date())
+                    )
+                },
+                MenuRow("Increase indent") { changeIndent(increase = true) },
+                MenuRow("Decrease indent") { changeIndent(increase = false) },
+                MenuRow("Go to line…") { promptGoToLine() },
+                MenuRow("Find & Replace…") { promptReplace() },
+                MenuRow("Statistics") { showStats() }
+            )
+        )
     }
 
     /** Options menu (⋮): how the editor looks and treats this file. */
     private fun showOptionsMenu(anchor: View) {
-        val menu = PopupMenu(this, anchor)
-        menu.menu.add(0, M_VISUAL_STYLE, 0, "Visual style…")
-        menu.menu.add(0, M_ENCODING, 1, "Encoding…")
-        menu.menu.add(0, M_SYNTAX, 2, "Syntax…")
-        val wrapItem = menu.menu.add(0, M_WRAP, 3, "Word wrap")
-        wrapItem.isCheckable = true
-        wrapItem.isChecked = settings.wordWrap
-        val roItem = menu.menu.add(0, M_READ_ONLY, 4, "Read only")
-        roItem.isCheckable = true
-        roItem.isChecked = readOnly
-        menu.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                M_VISUAL_STYLE -> promptVisualStyle()
-                M_ENCODING -> promptEncoding()
-                M_SYNTAX -> promptSyntax()
-                M_WRAP -> {
+        showCardMenu(
+            anchor,
+            listOf(
+                MenuRow("Visual style…") { promptVisualStyle() },
+                MenuRow("Encoding…") { promptEncoding() },
+                MenuRow("Syntax…") { promptSyntax() },
+                MenuRow("Word wrap", settings.wordWrap) {
                     settings.wordWrap = !settings.wordWrap
                     editor.setHorizontallyScrolling(!settings.wordWrap)
-                }
-                M_READ_ONLY -> setReadOnly(!readOnly)
-            }
-            true
-        }
-        menu.show()
+                },
+                MenuRow("Read only", readOnly) { setReadOnly(!readOnly) }
+            )
+        )
     }
 
     /** Visual Styles picker: recolours the editing area immediately. */
