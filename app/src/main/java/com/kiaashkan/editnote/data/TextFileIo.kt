@@ -14,12 +14,17 @@ import java.io.File
 object TextFileIo {
 
     private fun readBytes(context: Context, uri: Uri): ByteArray {
+        // Audit fix: a failed read used to return an EMPTY array,
+        // which the editor happily opened as a blank document — one
+        // later save then overwrote the real file with nothing.
+        // Fail loudly; callers abort the open instead.
         if (uri.scheme == "file") {
-            val path = uri.path ?: return ByteArray(0)
+            val path = uri.path
+                ?: throw IllegalStateException("File has no path: $uri")
             return File(path).readBytes()
         }
         return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: ByteArray(0)
+            ?: throw IllegalStateException("Could not open file for reading")
     }
 
     /** Returns the decoded text and the encoding actually used. */
@@ -38,7 +43,11 @@ object TextFileIo {
         } else text
         val bytes = TextCodec.encode(out, encoding)
         if (uri.scheme == "file") {
-            File(uri.path ?: return).writeBytes(bytes)
+            // Audit fix: a null path used to return silently, so the
+            // app reported "Saved" while nothing was written.
+            val path = uri.path
+                ?: throw IllegalStateException("File has no path: $uri")
+            File(path).writeBytes(bytes)
             return
         }
         // "wt" truncates first, so a shorter edit never leaves tail bytes.

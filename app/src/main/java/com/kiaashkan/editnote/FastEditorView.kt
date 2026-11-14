@@ -184,6 +184,11 @@ class FastEditorView @JvmOverloads constructor(
         // edited line with an estimated top (the draw refines it).
         anchorLine = firstLine
         anchorY = lineTopEstimate(firstLine)
+        // Audit fix: an edit that shrinks the document (delete a
+        // big chunk at the end) must not leave the scroll position
+        // pointing into the void.
+        val maxY = maxScrollY()
+        if (scrollYPos > maxY) scrollYPos = maxY
         onSelectionChanged?.invoke()
         onTextChanged?.invoke(a, b - a, ins)
         ensureCursorVisible()
@@ -333,6 +338,7 @@ class FastEditorView @JvmOverloads constructor(
     }
 
     fun setTextSizePx(px: Float) {
+        if (textPaint.textSize == px) return
         textPaint.textSize = px
         gutterPaint.textSize = px
         lineHeightEstimate = computeLineHeight()
@@ -341,6 +347,7 @@ class FastEditorView @JvmOverloads constructor(
     }
 
     fun setTypeface(tf: Typeface?) {
+        if (textPaint.typeface == tf) return
         textPaint.typeface = tf
         gutterPaint.typeface = tf
         lineHeightEstimate = computeLineHeight()
@@ -349,6 +356,7 @@ class FastEditorView @JvmOverloads constructor(
     }
 
     fun setLineSpacing(addPx: Float, mult: Float) {
+        if (lineSpacingAddPx == addPx && lineSpacingMult == mult) return
         lineSpacingAddPx = addPx
         lineSpacingMult = mult
         lineHeightEstimate = computeLineHeight()
@@ -816,6 +824,12 @@ class FastEditorView @JvmOverloads constructor(
             val layout = layoutForLine(line)
             val start = lineStart(line)
             val end = lineEnd(line)
+            // Everything text-side is clipped to the right of the
+            // gutter (KiA, item 60): with word wrap off, horizontally
+            // scrolled text must slide under the solid gutter, not
+            // shine through it and collide with the line numbers.
+            canvas.save()
+            canvas.clipRect(gutterW, 0, width, height)
             // Selection background for this line.
             val selA = selectionStart
             val selB = selectionEnd
@@ -828,7 +842,9 @@ class FastEditorView @JvmOverloads constructor(
             textPaint.color = textColor
             layout.draw(canvas)
             canvas.restore()
-            // Gutter number (only on the line's first visual row).
+            canvas.restore()
+            // Gutter number (only on the line's first visual row) —
+            // drawn UNclipped, on the solid gutter.
             if (showLineNumbers) {
                 gutterPaint.color = gutterColor
                 val baseline = y + layout.getLineBaseline(0)
@@ -841,7 +857,10 @@ class FastEditorView @JvmOverloads constructor(
             }
             // Cursor + selection handles are drawn inside the loop
             // so their coordinates come from the same measured pass
-            // as the text (no separate position walk).
+            // as the text (no separate position walk). Clipped to
+            // the text area like everything else text-side.
+            canvas.save()
+            canvas.clipRect(gutterW, 0, width, height)
             if (isFocused && line == cursorLine) {
                 val local = selEnd - start
                 val row = layout.getLineForOffset(local)
@@ -863,6 +882,7 @@ class FastEditorView @JvmOverloads constructor(
                     }
                 }
             }
+            canvas.restore()
             y += layout.height
             line++
         }
@@ -1112,7 +1132,6 @@ class FastEditorView @JvmOverloads constructor(
             }
 
             override fun onLongPress(e: MotionEvent) {
-                if (readOnly) return
                 val off = offsetAtPoint(e.x, e.y)
                 val (a, b) = wordBounds(off)
                 if (b > a) setSelection(a, b) else setSelection(off)

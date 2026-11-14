@@ -29,6 +29,8 @@ class FastScrollHandle @JvmOverloads constructor(
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var dragging = false
+    // Where inside the pill the finger grabbed it (audit fix).
+    private var grabOffset = 0f
 
     private fun maxScroll(): Int = editor?.maxScrollPos ?: 0
 
@@ -76,6 +78,7 @@ class FastScrollHandle @JvmOverloads constructor(
                 if (event.y < top - slack || event.y > top + thumbH + slack) {
                     return false
                 }
+                grabOffset = (event.y - top).coerceIn(0f, thumbH)
                 dragging = true
                 onGrab?.invoke()
                 parent?.requestDisallowInterceptTouchEvent(true)
@@ -99,7 +102,13 @@ class FastScrollHandle @JvmOverloads constructor(
 
     private fun scrub(y: Float, max: Int) {
         val ed = editor ?: return
-        val frac = (y / height).coerceIn(0f, 1f)
+        val thumbH = thumbHeight(max)
+        val travel = height - thumbH
+        val frac = if (travel > 0) {
+            ((y - grabOffset) / travel).coerceIn(0f, 1f)
+        } else {
+            (y / height).coerceIn(0f, 1f)
+        }
         ed.scrollToPos((frac * max).toInt())
         invalidate()
     }

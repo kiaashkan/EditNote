@@ -141,10 +141,12 @@ class MainActivity : Activity() {
         adapter.submit(entries)
         emptyText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         if (entries.isEmpty()) {
-            emptyText.text = if (bookmarksOnly) {
-                "No bookmarks yet.\nTap the star on a file to bookmark it."
-            } else {
-                "No files yet.\nTap + to create a new file, or open one from your device."
+            emptyText.text = when {
+                query.isNotEmpty() -> "No files match \u201C$query\u201D."
+                bookmarksOnly ->
+                    "No bookmarks yet.\nTap the star on a file to bookmark it."
+                else ->
+                    "No files yet.\nTap + to create a new file, or open one from your device."
             }
         }
     }

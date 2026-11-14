@@ -18,6 +18,10 @@ class TextPrintAdapter(
 ) : PrintDocumentAdapter() {
 
     private var pages: List<List<String>> = emptyList()
+    // Page geometry in points, set by onLayout from the CHOSEN
+    // media size — onWrite must render at this size (audit fix).
+    private var pageWidthPts = 595
+    private var pageHeightPts = 842
     private val paint = Paint().apply {
         typeface = Typeface.MONOSPACE
         textSize = 10f
@@ -33,6 +37,8 @@ class TextPrintAdapter(
         val media = newAttributes.mediaSize
         val width = media?.widthMils?.div(1000f)?.times(72f) ?: 612f
         val height = media?.heightMils?.div(1000f)?.times(72f) ?: 792f
+        pageWidthPts = width.toInt()
+        pageHeightPts = height.toInt()
         val margin = 36f
         val usableWidth = width - margin * 2
         val charsPerLine = (usableWidth / paint.measureText("M")).toInt().coerceAtLeast(20)
@@ -68,9 +74,8 @@ class TextPrintAdapter(
     ) {
         val document = PdfDocument()
         try {
-            val media = PrintAttributes.MediaSize.ISO_A4
             val pageInfo = PdfDocument.PageInfo
-                .Builder(media.widthMils / 1000 * 72, media.heightMils / 1000 * 72, 1)
+                .Builder(pageWidthPts, pageHeightPts, 1)
                 .create()
             pages.forEachIndexed { index, lines ->
                 if (!shouldWrite(index, pageRanges)) return@forEachIndexed
@@ -90,7 +95,9 @@ class TextPrintAdapter(
             FileOutputStream(destination.fileDescriptor).use { out: OutputStream ->
                 document.writeTo(out)
             }
-            callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+            // Report what was actually written (audit fix: this
+            // always claimed ALL_PAGES, even for a 2-page range).
+            callback.onWriteFinished(pageRanges)
         } catch (e: Exception) {
             callback.onWriteFailed(e.message)
         } finally {

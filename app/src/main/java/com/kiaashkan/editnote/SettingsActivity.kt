@@ -121,8 +121,15 @@ class SettingsActivity : Activity() {
             val swatchColor = AppSettings.colorFor(accentName, settings.isDark(this))
             val swatch = Button(this).apply {
                 text = if (settings.accent == accentName) "✓" else ""
+                // Check colour by luminance (audit fix): Pink and
+                // Cream are near-white, so a white check on them
+                // was invisible — the == WHITE test only caught
+                // the mono swatch.
+                val lum = (0.299 * android.graphics.Color.red(swatchColor) +
+                    0.587 * android.graphics.Color.green(swatchColor) +
+                    0.114 * android.graphics.Color.blue(swatchColor)) / 255.0
                 setTextColor(
-                    if (swatchColor == android.graphics.Color.WHITE) {
+                    if (lum > 0.6) {
                         android.graphics.Color.rgb(17, 17, 17)
                     } else android.graphics.Color.WHITE
                 )

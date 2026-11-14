@@ -19,7 +19,8 @@ object TextCodec {
     )
 
     fun isSupported(name: String): Boolean =
-        name.equals("UTF-32", true) ||
+        name.equals("UTF-8-BOM", true) ||
+            name.equals("UTF-32", true) ||
             name.equals("UTF-32LE", true) ||
             name.equals("UTF-32BE", true) ||
             runCatching { Charset.forName(name) }.isSuccess
@@ -55,13 +56,24 @@ object TextCodec {
     }
 
     private fun decodeWith(bytes: ByteArray, name: String): String = when {
+        // "UTF-8-BOM" is the used-encoding label for a UTF-8 file
+        // that carried a BOM: decoding is plain UTF-8 (the BOM was
+        // already stripped by detectBom), and encode() writes the
+        // BOM back — before this, a UTF-8 BOM was silently lost on
+        // every re-save.
+        name.equals("UTF-8-BOM", true) -> bytes.toString(Charsets.UTF_8)
         name.equals("UTF-32LE", true) -> decodeUtf32(bytes, littleEndian = true)
         name.equals("UTF-32BE", true) -> decodeUtf32(bytes, littleEndian = false)
         isUtf32(name) -> decodeUtf32(bytes, littleEndian = false)
-        else -> bytes.toString(Charset.forName(name))
+        else -> bytes.toString(
+            runCatching { Charset.forName(name) }.getOrElse { Charsets.UTF_8 }
+        )
     }
 
     fun encode(text: String, name: String): ByteArray = when {
+        name.equals("UTF-8-BOM", true) ->
+            byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) +
+                text.toByteArray(Charsets.UTF_8)
         name.equals("UTF-32LE", true) -> encodeUtf32(text, littleEndian = true)
         isUtf32(name) || name.equals("UTF-32BE", true) ->
             encodeUtf32(text, littleEndian = false)
@@ -73,7 +85,9 @@ object TextCodec {
         name.equals("UTF-16BE", true) ->
             byteArrayOf(0xFE.toByte(), 0xFF.toByte()) +
                 text.toByteArray(Charset.forName("UTF-16BE"))
-        else -> text.toByteArray(Charset.forName(name))
+        else -> text.toByteArray(
+            runCatching { Charset.forName(name) }.getOrElse { Charsets.UTF_8 }
+        )
     }
 
     /** (encoding, bomLength) or null when the bytes carry no known BOM. */
@@ -84,7 +98,7 @@ object TextCodec {
             // UTF-32 must be checked before UTF-16: FF FE 00 00 starts FF FE.
             has(0xFF, 0xFE, 0x00, 0x00) -> "UTF-32LE" to 4
             has(0x00, 0x00, 0xFE, 0xFF) -> "UTF-32BE" to 4
-            has(0xEF, 0xBB, 0xBF) -> "UTF-8" to 3
+            has(0xEF, 0xBB, 0xBF) -> "UTF-8-BOM" to 3
             has(0xFE, 0xFF) -> "UTF-16BE" to 2
             has(0xFF, 0xFE) -> "UTF-16LE" to 2
             else -> null
@@ -115,6 +129,7 @@ object TextCodec {
             }
             i += 4
         }
+        if (i < bytes.size) sb.append('\uFFFD')
         return sb.toString()
     }
 
@@ -123,7 +138,9 @@ object TextCodec {
         var i = 0
         while (i < text.length) {
             val cp = text.codePointAt(i)
-            codePoints.add(cp)
+            codePoints.add(
+                if (cp in 0xD800..0xDFFF || cp > 0x10FFFF) 0xFFFD else cp
+            )
             i += Character.charCount(cp)
         }
         val out = ByteArray(4 + codePoints.size * 4)

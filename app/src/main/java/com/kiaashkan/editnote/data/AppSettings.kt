@@ -36,7 +36,7 @@ class AppSettings(context: Context) {
         set(v) = prefs.edit().putBoolean(KEY_LINE_NUMBERS, v).apply()
 
     var wordWrap: Boolean
-        get() = prefs.getBoolean(KEY_WORD_WRAP, true)
+        get() = prefs.getBoolean(KEY_WORD_WRAP, false)
         set(v) = prefs.edit().putBoolean(KEY_WORD_WRAP, v).apply()
 
     var syntaxHighlight: Boolean
@@ -115,8 +115,6 @@ class AppSettings(context: Context) {
             Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
 
-    fun accentColor(): Int = colorFor(accent)
-
     /** Accent resolved against the effective theme (the mono accent flips:
      *  black in light mode, white in dark mode). */
     fun accentColor(context: Context): Int = colorFor(accent, isDark(context))
@@ -166,8 +164,6 @@ class AppSettings(context: Context) {
 
         const val ENC_UTF8 = "UTF-8"
         val ENCODINGS = TextCodec.ENCODINGS
-
-        fun colorFor(accent: String): Int = colorFor(accent, dark = false)
 
         fun colorFor(accent: String, dark: Boolean): Int = when (accent) {
             // KiA's own palette (2026-11-14, item 40): the default and

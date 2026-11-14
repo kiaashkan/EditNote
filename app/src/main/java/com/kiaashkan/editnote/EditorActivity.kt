@@ -298,13 +298,13 @@ class EditorActivity : Activity() {
                 val uri = Uri.parse(external)
                 val name = intent.getStringExtra(EXTRA_NAME) ?: "file.txt"
                 RecentFiles(this).add(uri, name)
-                listOf(docFromUri(uri, name))
+                listOf(docFromUri(uri, name) ?: newDraftDoc("Untitled"))
             }
             intent.data != null -> {
                 val uri = intent.data!!
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                listOf(docFromUri(uri, name))
+                listOf(docFromUri(uri, name) ?: newDraftDoc("Untitled"))
             }
             newName != null -> listOf(newDraftDoc(newName))
             else -> listOf(newDraftDoc("Untitled"))
@@ -313,18 +313,26 @@ class EditorActivity : Activity() {
 
 
 
-    /** Reads a file; returns its text and the encoding actually used
-     *  (a BOM in the file wins over the Settings default). */
-    private fun readExternal(uri: Uri, preferred: String = settings.encoding):
-        Pair<String, String> = try {
-        TextFileIo.read(this, uri, preferred)
-    } catch (e: Exception) {
-        Toast.makeText(this, "Could not open file: ${e.message}", Toast.LENGTH_LONG).show()
-        "" to preferred
-    }
+    // (The old readExternal() helper — which answered every read
+    // failure with an EMPTY string — was deleted in the audit: it
+    // turned lost permissions into blank documents. All reads now
+    // go through TextFileIo.read and handle failure explicitly.)
 
-    private fun docFromUri(uri: Uri, name: String): Doc {
-        val (text, usedEncoding) = readExternal(uri)
+    /** Null when the file cannot be read (KiA, item 61: a lost
+     *  permission used to produce an EMPTY doc bound to the URI,
+     *  which autosave could later write over the real file). */
+    private fun docFromUri(uri: Uri, name: String): Doc? {
+        val (text, usedEncoding) = try {
+            TextFileIo.read(this, uri, settings.encoding)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Access to “$name” was lost. Open it once via Open " +
+                    "file — after that it stays in Recents.",
+                Toast.LENGTH_LONG
+            ).show()
+            return null
+        }
         return Doc(uri = uri, name = name, text = text, encoding = usedEncoding)
     }
 
@@ -375,6 +383,15 @@ class EditorActivity : Activity() {
         }
         refreshLineNumbers()
         applyHighlighting()
+        // Audit fix: find state is per-document. Without this, the
+        // previous file's match ranges painted random positions of
+        // the new file and the counter kept the old count.
+        lastFindIndex = -1
+        if (::findBar.isInitialized && findBar.visibility == View.VISIBLE) {
+            refreshFindCounter()
+        } else {
+            clearFindHighlights()
+        }
     }
 
     private fun switchTo(index: Int) {
@@ -690,7 +707,11 @@ class EditorActivity : Activity() {
         editor.setTypeface(face)
         val spacingPx = settings.lineSpacingSp * resources.displayMetrics.scaledDensity
         editor.setLineSpacing(spacingPx, 1f)
-        editor.wordWrap = settings.wordWrap
+        // Large-file mode (item 46) wins over the raw setting for
+        // the document actually open — this runs on every resume
+        // and must not undo what loadDocIntoEditor decided.
+        editor.wordWrap = settings.wordWrap &&
+            editor.textLength() <= LARGE_FILE_CHARS
         editor.noSuggestions = !settings.showSuggestions
         editor.autoCapitalize = settings.autoCapitalize
         accessoryScroll.visibility = if (settings.accessoryView) View.VISIBLE else View.GONE
@@ -760,12 +781,23 @@ class EditorActivity : Activity() {
                 tag = android.graphics.Color.rgb(0, 105, 92),
                 property = android.graphics.Color.rgb(230, 81, 0)
             )
-            // Scan OFF the UI thread (KiA, item 50: a large code file
-            // froze solid when this ran inline). A version counter
-            // drops results computed for text that has since changed.
-            // Only the batched span write happens on the UI thread;
-            // find highlights use BackgroundColorSpans, which the
-            // syntax pass never touches, so they survive untouched.
+            // Small files: compute and apply SYNCHRONOUSLY (KiA,
+            // item 58). The scan is ~5 ms per 30K chars on a desktop
+            // JVM and his code files are a few KB; the async path's
+            // version/length guards could silently swallow results
+            // on-device, and colours simply never appeared for him
+            // even with a manual JavaScript pick. Large files keep
+            // the background path (item 50's freeze was the old
+            // whole-document span application on EditText, not this
+            // pure string scan).
+            if (source.length <= SYNC_HIGHLIGHT_MAX) {
+                editor.highlightRanges = try {
+                    SyntaxHighlighter.compute(source, lang, style)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                return
+            }
             val docRef = doc
             val version = ++highlightVersion
             highlightExecutor.execute {
@@ -1177,12 +1209,24 @@ class EditorActivity : Activity() {
             return
         }
         val doReload = {
-            val (reloadedText, reloadedEnc) = readExternal(uri, doc.encoding)
-            doc.text = reloadedText
-            doc.encoding = reloadedEnc
-            doc.dirty = false
-            doc.selection = 0
-            if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
+            // Audit fix: readExternal() answered a failed read with
+            // an EMPTY string — reloading a file whose access was
+            // lost wiped the tab's text and marked it clean. Read
+            // with a throwing call and abort on failure instead.
+            try {
+                val (reloadedText, reloadedEnc) =
+                    TextFileIo.read(this, uri, doc.encoding)
+                doc.text = reloadedText
+                doc.encoding = reloadedEnc
+                doc.dirty = false
+                doc.selection = 0
+                if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this, "Could not reload file: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
         if (doc.dirty) {
             CardDialogs.confirm(
@@ -1229,14 +1273,19 @@ class EditorActivity : Activity() {
         }
         if (lineStarts.isEmpty()) lineStarts.add(firstLineStart)
 
-        val builder = StringBuilder(text)
+        // Transform only the touched lines' span and push it
+        // through the engine's edit funnel (audit fix — this used
+        // to swap the WHOLE document via setTextContent under
+        // suppress: the scroll jumped to the top, undo bookkeeping
+        // never saw the change and the redo stack kept stale text).
+        val spanStart = firstLineStart
+        val lastStart = lineStarts.last()
+        val spanEnd = text.indexOf('\n', lastStart).let {
+            if (it < 0) text.length else it
+        }
+        val spanLines = text.substring(spanStart, spanEnd).split("\n")
         var deltaTotal = 0
-        // Work from the last line backwards so earlier offsets stay valid.
-        for (lineStart in lineStarts.asReversed()) {
-            val lineEnd = builder.indexOf("\n", lineStart).let {
-                if (it < 0) builder.length else it
-            }
-            val line = builder.substring(lineStart, lineEnd)
+        val newSpan = spanLines.joinToString("\n") { line ->
             val changed = when {
                 increase -> unit + line
                 line.startsWith("\t") -> line.substring(1)
@@ -1244,31 +1293,18 @@ class EditorActivity : Activity() {
                 line.startsWith(" ") -> line.replaceFirst(Regex("^ {1,4}"), "")
                 else -> line
             }
-            if (changed != line) {
-                builder.replace(lineStart, lineEnd, changed)
-                deltaTotal += changed.length - line.length
-            }
+            deltaTotal += changed.length - line.length
+            changed
         }
-        val updated = builder.toString()
-        if (updated == text) return
-        suppress = true
-        editor.setTextContent(updated)
-        suppress = false
-        docs.getOrNull(active)?.let {
-            it.text = updated
-            it.dirty = true
-        }
+        if (deltaTotal == 0 && newSpan == text.substring(spanStart, spanEnd)) return
+        val savedScroll = editor.scrollYPos
+        editor.replaceRange(spanStart, spanEnd, newSpan)
+        val updatedLength = text.length + deltaTotal
         val newStart = (selStart + if (increase) unit.length else 0)
-            .coerceIn(0, updated.length)
-        val newEnd = (selEnd + deltaTotal).coerceIn(newStart, updated.length)
+            .coerceIn(0, updatedLength)
+        val newEnd = (selEnd + deltaTotal).coerceIn(newStart, updatedLength)
         editor.setSelection(newStart, newEnd)
-        refreshLineNumbers()
-        applyHighlighting()
-        if (settings.autosave) {
-            handler.removeCallbacks(autosaveRunnable)
-            handler.postDelayed(autosaveRunnable, settings.autosaveIntervalSec * 1000L)
-        }
-        renderTabs()
+        editor.scrollToY(savedScroll)
     }
 
     private fun printActive() {
@@ -1362,7 +1398,7 @@ class EditorActivity : Activity() {
                 } catch (e: SecurityException) { /* temporary access is fine */ }
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                addDoc(docFromUri(uri, name))
+                docFromUri(uri, name)?.let { addDoc(it) }
             }
             REQ_SAVE_DEST, REQ_CREATE -> {
                 val doc = pendingDestinationDoc ?: docs.getOrNull(active) ?: return
@@ -1370,6 +1406,18 @@ class EditorActivity : Activity() {
                 stashActiveIf(doc)
                 try {
                     TextFileIo.write(this, uri, doc.text, doc.encoding)
+                    // KiA, item 61: without this, the create grant
+                    // dies with the process and the file can never be
+                    // reopened from Recents ("Permission Denial").
+                    // REQ_OPEN took its permission; the save flows
+                    // never did.
+                    try {
+                        contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                    } catch (e: SecurityException) { /* keep the write */ }
                     doc.uri = uri
                     doc.name = RecentFiles.displayName(this, uri)
                     doc.needsDestination = false
@@ -1606,20 +1654,17 @@ class EditorActivity : Activity() {
             return
         }
         val count = Regex(Regex.escape(find), RegexOption.IGNORE_CASE).findAll(current).count()
-        suppress = true
-        editor.setTextContent(updated)
-        suppress = false
-        docs.getOrNull(active)?.let {
-            it.text = updated
-            it.dirty = true
-        }
-        refreshLineNumbers()
-        applyHighlighting()
-        if (settings.autosave) {
-            handler.removeCallbacks(autosaveRunnable)
-            handler.postDelayed(autosaveRunnable, settings.autosaveIntervalSec * 1000L)
-        }
-        renderTabs()
+        // Audit fix: this used setTextContent under suppress — the
+        // change was invisible to undo bookkeeping (baseline never
+        // updated, redo stack kept stale text) and the view jumped
+        // to the top. One engine edit keeps dirty/undo/autosave
+        // bookkeeping via the normal listener and preserves the
+        // scroll position and selection.
+        val savedScroll = editor.scrollYPos
+        val savedSel = editor.selectionStart
+        editor.replaceRange(0, current.length, updated)
+        editor.setSelection(savedSel.coerceIn(0, updated.length))
+        editor.scrollToY(savedScroll)
         Toast.makeText(this, "Replaced $count occurrence(s)", Toast.LENGTH_SHORT).show()
     }
 
@@ -1632,6 +1677,7 @@ class EditorActivity : Activity() {
         val syntaxLabel = when (doc.syntax) {
             SyntaxHighlighter.AUTO ->
                 SyntaxHighlighter.languageForExtension(doc.name)?.display?.let { "$it (automatic)" }
+                    ?: SyntaxHighlighter.detect(text)?.display?.let { "$it (automatic)" }
                     ?: "None (automatic)"
             SyntaxHighlighter.NONE -> "None"
             else -> SyntaxHighlighter.languageById(doc.syntax)?.display ?: doc.syntax
@@ -1640,7 +1686,8 @@ class EditorActivity : Activity() {
         CardDialogs.info(
             this, palette, "Statistics",
             "Characters: ${text.length}\nWords: $words\nLines: $lines\n" +
-                "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel"
+                "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel" +
+                "\nColour ranges: ${editor.highlightRanges.size}"
         )
     }
 
@@ -1658,6 +1705,7 @@ class EditorActivity : Activity() {
         private const val HISTORY_DELAY_MS = 600L
         private const val LARGE_FILE_CHARS = 200_000
         private const val HIGHLIGHT_DELAY_MS = 500L
+        private const val SYNC_HIGHLIGHT_MAX = 30_000
         private const val REQ_OPEN = 2002
         private const val REQ_CREATE = 2001
         private const val REQ_SAVE_DEST = 2003

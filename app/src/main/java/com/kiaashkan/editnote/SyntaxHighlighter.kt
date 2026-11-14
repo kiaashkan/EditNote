@@ -84,7 +84,7 @@ object SyntaxHighlighter {
                     "instanceof in of class extends super this null undefined true false try catch finally throw async await yield static get set import export from"
             ),
             builtins = kw("console document window Math JSON Promise Array Object String Number Boolean Error setTimeout setInterval fetch require module"),
-            quotes = listOf("\"", "'", "`")
+            quotes = listOf("\"", "'", "`"), charLiteral = false
         ),
         Lang(
             "typescript", "TypeScript", setOf("ts", "tsx"),
@@ -94,7 +94,7 @@ object SyntaxHighlighter {
                     "interface type enum namespace declare abstract readonly public private protected implements keyof infer any unknown never void string number boolean symbol object"
             ),
             builtins = kw("console document window Math JSON Promise Array Object String Number Boolean Error setTimeout setInterval fetch require"),
-            quotes = listOf("\"", "'", "`")
+            quotes = listOf("\"", "'", "`"), charLiteral = false
         ),
         Lang(
             "c", "C", setOf("c", "h"),
@@ -148,7 +148,7 @@ object SyntaxHighlighter {
             ),
             builtins = kw("isset empty unset count is_array is_string strlen strpos str_replace array_push json_encode json_decode sprintf var_dump"),
             lineComments = listOf("//", "#"),
-            quotes = listOf("\"", "'"), variables = true
+            quotes = listOf("\"", "'"), variables = true, charLiteral = false
         ),
         Lang(
             "ruby", "Ruby", setOf("rb"),
@@ -335,6 +335,19 @@ object SyntaxHighlighter {
             "css" -> markCss(out, source, lang, style)
             "ini", "yaml" -> markConfig(out, source, lang, style)
             else -> scan(out, source, lang, style)
+        }
+        if (out.size > 1) {
+            out.sortWith(compareBy<Range> { it.from }.thenBy { it.to })
+            var write = 0
+            var lastEnd = -1
+            for (i in out.indices) {
+                val r = out[i]
+                if (r.from >= lastEnd) {
+                    out[write++] = r
+                    lastEnd = r.to
+                }
+            }
+            while (out.size > write) out.removeAt(out.size - 1)
         }
         return out
     }

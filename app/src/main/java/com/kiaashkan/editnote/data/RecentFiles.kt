@@ -29,7 +29,7 @@ class RecentFiles(context: Context) {
             if (parts.size < 2) null
             else Entry(
                 uri = parts[0],
-                name = parts[1],
+                name = unescape(parts[1]),
                 lastOpened = parts.getOrNull(2)?.toLongOrNull() ?: 0L,
                 bookmarked = parts.getOrNull(3) == "1"
             )
@@ -44,7 +44,7 @@ class RecentFiles(context: Context) {
         prefs.edit().putString(
             KEY,
             all.joinToString(SEP) { e ->
-                "${e.uri}|${e.name}|${e.lastOpened}|${if (e.bookmarked) "1" else "0"}"
+                "${e.uri}|${escape(e.name)}|${e.lastOpened}|${if (e.bookmarked) "1" else "0"}"
             }
         ).apply()
     }
@@ -58,6 +58,21 @@ class RecentFiles(context: Context) {
         )
         save(entries)
     }
+
+    // Display names come from the file provider and may contain
+    // the field separator '|' or even newlines ("Meeting | Notes",
+    // audit finding) — escape them inside the store.
+    private fun escape(s: String): String = s
+        .replace("%", "%25")
+        .replace("|", "%7C")
+        .replace("\n", "%0A")
+        .replace("\r", "%0D")
+
+    private fun unescape(s: String): String = s
+        .replace("%0D", "\r")
+        .replace("%0A", "\n")
+        .replace("%7C", "|")
+        .replace("%25", "%")
 
     fun remove(uri: String) {
         save(list().filter { it.uri != uri })
