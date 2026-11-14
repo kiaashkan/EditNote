@@ -1,0 +1,1263 @@
+package com.kiaashkan.editnote
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
+import android.text.InputType
+import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.UnderlineSpan
+import android.util.AttributeSet
+import android.view.ActionMode
+import android.view.GestureDetector
+import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
+import android.view.MotionEvent
+import android.view.View
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
+import android.widget.OverScroller
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * EditNote's own editor engine (KiA, item 51 — the QuickEdit lesson):
+ * a stock EditText lays out the WHOLE document as one giant layout,
+ * which is why long files scrolled badly no matter the tuning. This
+ * view instead:
+ *
+ *  - keeps the text as a buffer + a line-start index,
+ *  - builds a StaticLayout ONLY for the lines on screen (cached),
+ *  - draws text, selection, cursor and the line-number gutter in a
+ *    single onDraw pass (numbers can never lag behind the text),
+ *  - scrolls with its own OverScroller, so fling physics are the
+ *    platform's and travel scales with the flick,
+ *  - highlights syntax per visible line from precomputed ranges.
+ *
+ * Line heights are measured per laid-out line and cached; unknown
+ * lines use the running average, so total height is an estimate that
+ * converges to exact as the user scrolls (the standard virtualized
+ * list trick). Editing goes through replaceRange(), which is the
+ * single funnel the activity's undo/autosave listeners hang off.
+ */
+class FastEditorView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : View(context, attrs), FastEditorView.ScrollSurface {
+
+    /** Surface the fast-scroll handle drives (replaces its EditText). */
+    interface ScrollSurface {
+        val scrollPosY: Int
+        val viewportH: Int
+        val maxScrollPos: Int
+        fun scrollToPos(y: Int)
+    }
+
+    // ------------------------------------------------------------------
+    // Text model
+    // ------------------------------------------------------------------
+    private val buffer = StringBuilder()
+    private var lineStarts = IntArray(64)
+    private var lineCount = 1
+
+    // Per-line measured height in px; -1 = not measured yet.
+    private var lineHeights = IntArray(64)
+    private var measuredSum = 0L
+    private var measuredCount = 0
+
+    private fun rebuildLineIndex() {
+        var capacity = 64
+        var starts = IntArray(capacity)
+        var count = 0
+        starts[count++] = 0
+        var i = 0
+        val n = buffer.length
+        while (i < n) {
+            if (buffer[i] == '\n') {
+                if (count == capacity) {
+                    capacity *= 2
+                    starts = starts.copyOf(capacity)
+                }
+                starts[count++] = i + 1
+            }
+            i++
+        }
+        lineStarts = starts
+        lineCount = count
+        lineHeights = IntArray(max(64, count)) { -1 }
+        measuredSum = 0
+        measuredCount = 0
+        layoutCache.clear()
+    }
+
+    private fun lineStart(line: Int): Int = lineStarts[line]
+    private fun lineEnd(line: Int): Int =
+        if (line + 1 < lineCount) lineStarts[line + 1] - 1 else buffer.length
+
+    private fun lineOfOffset(offset: Int): Int {
+        var lo = 0
+        var hi = lineCount - 1
+        while (lo < hi) {
+            val mid = (lo + hi + 1) / 2
+            if (lineStarts[mid] <= offset) lo = mid else hi = mid - 1
+        }
+        return lo
+    }
+
+    fun textString(): String = buffer.toString()
+    fun textLength(): Int = buffer.length
+
+    /** Programmatic load: no listener, selection reset by caller. */
+    fun setTextContent(s: String) {
+        stopFling()
+        buffer.setLength(0)
+        buffer.append(s)
+        rebuildLineIndex()
+        selStart = 0
+        selEnd = 0
+        composingStart = -1
+        composingEnd = -1
+        scrollYPos = 0
+        scrollXPos = 0
+        anchorLine = 0
+        anchorY = 0
+        requestLayout()
+        invalidate()
+    }
+
+    /**
+     * The single edit funnel. Fires [onTextChanged] AFTER applying,
+     * unless suppressed by [silentEdit] (the activity sets it while
+     * restoring snapshots, mirroring the old `suppress` flag usage —
+     * actually the activity's listener checks its own flag; this view
+     * always reports).
+     */
+    fun replaceRange(start: Int, end: Int, ins: String) {
+        val a = start.coerceIn(0, buffer.length)
+        val b = end.coerceIn(a, buffer.length)
+        if (a == b && ins.isEmpty()) return
+        val firstLine = lineOfOffset(a)
+        val lastLine = lineOfOffset(b)
+        val removedLines = lastLine - firstLine
+        val charDelta = ins.length - (b - a)
+        buffer.replace(a, b, ins)
+        spliceLineIndex(firstLine, removedLines, ins, a, charDelta)
+        // Selection follows the edit point simply: collapse to the
+        // end of the inserted text (callers set selection explicitly
+        // when they need something else).
+        selStart = a + ins.length
+        selEnd = selStart
+        composingStart = -1
+        composingEnd = -1
+        layoutCache.clear()
+        // Heights below the edit may have shifted; re-anchor at the
+        // edited line with an estimated top (the draw refines it).
+        anchorLine = firstLine
+        anchorY = lineTopEstimate(firstLine)
+        onTextChanged?.invoke(a, b - a, ins)
+        ensureCursorVisible()
+        invalidate()
+    }
+
+    /** Adjust the line index for an edit inside [firstLine] that
+     *  removed [removedLines] lines and inserted [ins] at [editPos],
+     *  shifting every later start by [charDelta]. */
+    private fun spliceLineIndex(
+        firstLine: Int,
+        removedLines: Int,
+        ins: String,
+        editPos: Int,
+        charDelta: Int
+    ) {
+        val deltaLines = ins.count { it == '\n' } - removedLines
+        // Starts of the lines created by newlines inside the insert.
+        val newStarts = ArrayList<Int>()
+        var idx = ins.indexOf('\n')
+        while (idx >= 0) {
+            newStarts.add(editPos + idx + 1)
+            idx = ins.indexOf('\n', idx + 1)
+        }
+        val tailIndex = firstLine + 1 + removedLines // first untouched old line
+        val needed = lineCount + deltaLines
+        val starts = IntArray(max(64, needed + 8))
+        System.arraycopy(lineStarts, 0, starts, 0, firstLine + 1)
+        var w = firstLine + 1
+        for (ns in newStarts) starts[w++] = ns
+        var r = tailIndex
+        while (r < lineCount) {
+            starts[w++] = lineStarts[r] + charDelta
+            r++
+        }
+        lineStarts = starts
+        val heights = IntArray(max(64, needed + 8)) { -1 }
+        System.arraycopy(lineHeights, 0, heights, 0, firstLine + 1)
+        var hw = firstLine + 1 + newStarts.size
+        var hr = tailIndex
+        while (hr < lineCount && hw < heights.size) {
+            heights[hw++] = lineHeights[hr]
+            hr++
+        }
+        lineHeights = heights
+        lineCount = needed
+        // measuredSum/Count are approximations after edits; recompute
+        // lazily is overkill — drop them to the known prefix only.
+        measuredSum = 0
+        measuredCount = 0
+        for (i in 0 until lineCount) {
+            val h = lineHeights[i]
+            if (h >= 0) {
+                measuredSum += h
+                measuredCount++
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Selection / cursor / composing
+    // ------------------------------------------------------------------
+    var selStart = 0
+        private set
+    var selEnd = 0
+        private set
+    val selectionStart: Int get() = min(selStart, selEnd)
+    val selectionEnd: Int get() = max(selStart, selEnd)
+
+    private var composingStart = -1
+    private var composingEnd = -1
+
+    var onTextChanged: ((start: Int, removed: Int, inserted: String) -> Unit)? = null
+    var onScrollChanged: (() -> Unit)? = null
+    var onSelectionChanged: (() -> Unit)? = null
+
+    fun setSelection(a: Int, b: Int = a) {
+        val len = buffer.length
+        selStart = a.coerceIn(0, len)
+        selEnd = b.coerceIn(0, len)
+        restartCursorBlink()
+        onSelectionChanged?.invoke()
+        invalidate()
+    }
+
+    // ------------------------------------------------------------------
+    // Appearance / settings
+    // ------------------------------------------------------------------
+    private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val gutterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.RIGHT
+    }
+    private val fillPaint = Paint()
+
+    var textColor: Int = 0xFF111111.toInt()
+    var editorBackground: Int = 0xFFFFFFFF.toInt()
+    var gutterColor: Int = 0xFF888888.toInt()
+    var gutterBackground: Int = 0xFFF0F0F0.toInt()
+    var accentColor: Int = 0xFFF46658.toInt()
+    var selectionColor: Int = 0x66F46658
+    var showLineNumbers: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+    var wordWrap: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                if (!value) scrollXPos = 0
+                layoutCache.clear()
+                invalidate()
+            }
+        }
+    var readOnly: Boolean = false
+    var noSuggestions: Boolean = false
+    var autoCapitalize: Boolean = false
+
+    private var lineSpacingAddPx: Float = 0f
+    private var lineSpacingMult: Float = 1f
+
+    fun setTextSizePx(px: Float) {
+        textPaint.textSize = px
+        gutterPaint.textSize = px
+        lineHeightEstimate = computeLineHeight()
+        layoutCache.clear()
+        invalidate()
+    }
+
+    fun setTypeface(tf: Typeface?) {
+        textPaint.typeface = tf
+        gutterPaint.typeface = tf
+        lineHeightEstimate = computeLineHeight()
+        layoutCache.clear()
+        invalidate()
+    }
+
+    fun setLineSpacing(addPx: Float, mult: Float) {
+        lineSpacingAddPx = addPx
+        lineSpacingMult = mult
+        lineHeightEstimate = computeLineHeight()
+        layoutCache.clear()
+        invalidate()
+    }
+
+    private fun computeLineHeight(): Int {
+        val fm = textPaint.fontMetricsInt
+        val base = fm.descent - fm.ascent
+        return (base * lineSpacingMult + lineSpacingAddPx).toInt().coerceAtLeast(1)
+    }
+
+    private var lineHeightEstimate: Int = 1
+
+    private val density: Float get() = resources.displayMetrics.density
+
+    fun gutterWidthPx(): Int {
+        if (!showLineNumbers) return 0
+        val digits = lineCount.toString().length.coerceAtLeast(2)
+        val w = gutterPaint.measureText("9".repeat(digits)).toInt()
+        return w + (22 * density).toInt()
+    }
+
+    // ------------------------------------------------------------------
+    // Layout cache (per visible line)
+    // ------------------------------------------------------------------
+    private val layoutCache = object : LinkedHashMap<Int, StaticLayout>(64, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<Int, StaticLayout>
+        ): Boolean = size > 220
+    }
+
+    /** Highlight ranges for the whole text (from the background
+     *  highlighter); [highlightVersion] invalidates line layouts. */
+    var highlightRanges: List<SyntaxHighlighter.Range> = emptyList()
+        set(value) {
+            field = value
+            highlightVersion++
+            layoutCache.clear()
+            invalidate()
+        }
+    private var highlightVersion = 0
+
+    /** Extra one-off spans (find highlights), same mechanism. */
+    var findRanges: List<Pair<IntRange, Int>> = emptyList()
+        set(value) {
+            field = value
+            layoutCache.clear()
+            invalidate()
+        }
+
+    /** Foreground counterpart of [findRanges] (current match). */
+    var findFgRanges: List<Pair<IntRange, Int>> = emptyList()
+        set(value) {
+            field = value
+            layoutCache.clear()
+            invalidate()
+        }
+
+    private var lastLayoutAvail = -1
+
+    private fun layoutForLine(line: Int): StaticLayout {
+        // The wrap width depends on the gutter width, which grows
+        // when the line count crosses a power of ten; cached layouts
+        // built for another width are invalid.
+        val availNow = if (wordWrap) {
+            (width - gutterWidthPx() - paddingLeft - paddingRight)
+                .coerceAtLeast(1)
+        } else {
+            Int.MAX_VALUE / 2
+        }
+        if (lastLayoutAvail != -1 && availNow != lastLayoutAvail &&
+            layoutCache.isNotEmpty()
+        ) {
+            layoutCache.clear()
+            for (i in lineHeights.indices) lineHeights[i] = -1
+            measuredSum = 0
+            measuredCount = 0
+        }
+        lastLayoutAvail = availNow
+        layoutCache[line]?.let { return it }
+        val start = lineStart(line)
+        val end = lineEnd(line)
+        val raw = buffer.substring(start, end)
+        val spanned = SpannableString(raw)
+        // Syntax ranges intersecting this line.
+        for (r in highlightRanges) {
+            if (r.to <= start) continue
+            if (r.from >= end) break
+            val a = max(r.from, start) - start
+            val b = min(r.to, end) - start
+            if (b > a) {
+                spanned.setSpan(
+                    ForegroundColorSpan(r.color), a, b,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        for ((range, color) in findRanges) {
+            if (range.last < start) continue
+            if (range.first > end) break
+            val a = max(range.first, start) - start
+            val b = min(range.last + 1, end) - start
+            if (b > a) {
+                spanned.setSpan(
+                    BackgroundColorSpan(color), a, b,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        for ((range, color) in findFgRanges) {
+            if (range.last < start) continue
+            if (range.first > end) break
+            val a = max(range.first, start) - start
+            val b = min(range.last + 1, end) - start
+            if (b > a) {
+                spanned.setSpan(
+                    ForegroundColorSpan(color), a, b,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        if (composingStart >= 0) {
+            val a = max(composingStart, start) - start
+            val b = min(composingEnd, end) - start
+            if (b > a && a >= 0) {
+                spanned.setSpan(
+                    UnderlineSpan(), a, b, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        val layout = StaticLayout.Builder
+            .obtain(spanned, 0, spanned.length, textPaint, availNow)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(lineSpacingAddPx, lineSpacingMult)
+            .setIncludePad(false)
+            .build()
+        layoutCache[line] = layout
+        if (lineHeights[line] < 0) {
+            lineHeights[line] = layout.height
+            measuredSum += layout.height
+            measuredCount++
+        }
+        return layout
+    }
+
+    private fun avgLineHeight(): Float =
+        if (measuredCount > 0) measuredSum.toFloat() / measuredCount
+        else lineHeightEstimate.toFloat()
+
+    /** Estimated total content height in px. */
+    fun contentHeightPx(): Int {
+        val avg = avgLineHeight()
+        var total = 0L
+        // Exact for measured lines, estimate for the rest.
+        total = measuredSum + ((lineCount - measuredCount) * avg).toLong()
+        return total.toInt().coerceAtLeast(0)
+    }
+
+    // ScrollSurface (for the fast-scroll handle).
+    override val scrollPosY: Int get() = scrollYPos
+    override val viewportH: Int get() = height
+    override val maxScrollPos: Int get() = maxScrollY()
+    override fun scrollToPos(y: Int) {
+        stopFling()
+        scrollToY(y)
+    }
+
+    // ------------------------------------------------------------------
+    // Scrolling
+    // ------------------------------------------------------------------
+    private val scroller = OverScroller(context)
+    var scrollYPos: Int = 0
+        private set
+    var scrollXPos: Int = 0
+        private set
+
+    fun maxScrollY(): Int =
+        (contentHeightPx() + paddingTop + paddingBottom - height).coerceAtLeast(0)
+
+    fun stopFling() {
+        if (!scroller.isFinished) scroller.forceFinished(true)
+    }
+
+    fun scrollToY(y: Int) {
+        val clamped = y.coerceIn(0, maxScrollY())
+        if (clamped != scrollYPos) {
+            scrollYPos = clamped
+            onScrollChanged?.invoke()
+            invalidate()
+        }
+    }
+
+    override fun computeScroll() {
+        if (scroller.computeScrollOffset()) {
+            scrollYPos = scroller.currY.coerceIn(0, maxScrollY())
+            scrollXPos = scroller.currX.coerceIn(0, maxScrollX())
+            onScrollChanged?.invoke()
+            invalidate()
+        }
+    }
+
+    private fun maxScrollX(): Int {
+        if (wordWrap) return 0
+        // Widest measured line so far (estimate grows as lines render).
+        var widest = 0
+        for (line in 0 until lineCount) {
+            val l = layoutCache[line] ?: continue
+            widest = max(widest, l.width)
+        }
+        val avail = width - gutterWidthPx() - paddingLeft - paddingRight
+        return (widest - avail).coerceAtLeast(0)
+    }
+
+    /** Bring [offset] into view (find reveal, go-to-line, cursor). */
+    fun scrollToOffset(offset: Int) {
+        scrollToOffsetNow(offset)
+        // Far targets are placed from height estimates; once the
+        // next draw has measured the neighbourhood, land exactly.
+        post {
+            val before = scrollYPos
+            scrollToOffsetNow(offset)
+            if (scrollYPos == before) return@post
+            post { scrollToOffsetNow(offset) }
+        }
+    }
+
+    private fun scrollToOffsetNow(offset: Int) {
+        val line = lineOfOffset(offset)
+        val layout = layoutForLine(line)
+        val local = offset - lineStart(line)
+        val rowLine = layout.getLineForOffset(local)
+        val yTop = lineTopPx(line) + layout.getLineTop(rowLine)
+        val yBottom = yTop + (layout.getLineBottom(rowLine) - layout.getLineTop(rowLine))
+        val viewTop = scrollYPos
+        val viewBottom = scrollYPos + height
+        when {
+            yTop < viewTop -> scrollToY(yTop - height / 3)
+            yBottom > viewBottom -> scrollToY(yBottom - height * 2 / 3)
+        }
+        if (!wordWrap) {
+            val x = layout.getPrimaryHorizontal(local).toInt()
+            val avail = width - gutterWidthPx() - paddingLeft - paddingRight
+            if (x - scrollXPos > avail - 40) {
+                scrollXPos = (x - avail + 80).coerceAtLeast(0)
+            } else if (x < scrollXPos) {
+                scrollXPos = (x - 40).coerceAtLeast(0)
+            }
+            invalidate()
+        }
+    }
+
+    fun ensureCursorVisible() {
+        if (isFocused) scrollToOffset(selEnd)
+    }
+
+    /**
+     * Estimated pixel Y of the top of [line]: sums cached heights and
+     * uses the running average for unmeasured lines. Pure arithmetic
+     * over the heights array — never builds a layout, so it is safe
+     * for far jumps (go-to-line, fast-scroll drags).
+     */
+    private fun lineTopEstimate(line: Int): Int {
+        val avg = avgLineHeight().toInt().coerceAtLeast(1)
+        var y = 0L
+        var i = 0
+        while (i < line && i < lineCount) {
+            val h = lineHeights[i]
+            y += if (h >= 0) h else avg
+            i++
+        }
+        return y.toInt()
+    }
+
+    private fun lineTopPx(line: Int): Int = lineTopEstimate(line)
+
+    // Anchor: the (line, exactTopY) of the first visible line as of
+    // the last draw. Scroll resolution steps from here, measuring
+    // only the lines it passes, so a frame never lays out more than
+    // the scroll delta plus the visible window.
+    private var anchorLine = 0
+    private var anchorY = 0
+
+    private fun heightOf(line: Int): Int =
+        if (lineHeights[line] >= 0) lineHeights[line] else layoutForLine(line).height
+
+    /** First (partially) visible logical line + the px of its top. */
+    private fun firstVisibleLine(): Pair<Int, Int> {
+        val target = scrollYPos
+        var line = anchorLine.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+        var y = anchorY
+        val avg = avgLineHeight().toInt().coerceAtLeast(1)
+        if (target >= y) {
+            // Estimate-jump most of the way, then measure exactly.
+            val remaining = target - y
+            if (remaining > height * 3) {
+                val jump = (remaining / avg).coerceAtMost(lineCount - 1 - line)
+                if (jump > 0) {
+                    line += jump
+                    y += jump * avg
+                }
+            }
+            while (line < lineCount) {
+                val h = heightOf(line)
+                if (y + h > target) break
+                y += h
+                line++
+            }
+        } else {
+            val remaining = y - target
+            if (remaining > height * 3) {
+                val jump = (remaining / avg).coerceAtMost(line)
+                if (jump > 0) {
+                    line -= jump
+                    y -= jump * avg
+                }
+            }
+            while (line > 0 && y > target) {
+                line--
+                y -= heightOf(line)
+            }
+            while (line < lineCount) {
+                val h = heightOf(line)
+                if (y + h > target) break
+                y += h
+                line++
+            }
+        }
+        if (line >= lineCount) {
+            line = (lineCount - 1).coerceAtLeast(0)
+            y = lineTopEstimate(line)
+        }
+        anchorLine = line
+        anchorY = y
+        return line to y
+    }
+
+    // ------------------------------------------------------------------
+    // Drawing
+    // ------------------------------------------------------------------
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        // Backgrounds.
+        fillPaint.color = editorBackground
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fillPaint)
+        val gutterW = gutterWidthPx()
+        if (showLineNumbers) {
+            fillPaint.color = gutterBackground
+            canvas.drawRect(0f, 0f, gutterW.toFloat(), height.toFloat(), fillPaint)
+        }
+        val (firstLine, firstTop) = firstVisibleLine()
+        var y = firstTop - scrollYPos + paddingTop
+        var line = firstLine
+        val textLeft = gutterW + paddingLeft - scrollXPos
+        val bottomLimit = height + lineHeightEstimate
+
+        while (line < lineCount && y < bottomLimit) {
+            val layout = layoutForLine(line)
+            val start = lineStart(line)
+            val end = lineEnd(line)
+            // Selection background for this line.
+            val selA = selectionStart
+            val selB = selectionEnd
+            if (selB > selA && selA < end + 1 && selB > start) {
+                drawSelection(canvas, layout, start, selA, selB, textLeft, y)
+            }
+            // Text.
+            canvas.save()
+            canvas.translate(textLeft.toFloat(), y.toFloat())
+            textPaint.color = textColor
+            layout.draw(canvas)
+            canvas.restore()
+            // Gutter number (only on the line's first visual row).
+            if (showLineNumbers) {
+                gutterPaint.color = gutterColor
+                val baseline = y + layout.getLineBaseline(0)
+                canvas.drawText(
+                    (line + 1).toString(),
+                    (gutterW - 10 * density),
+                    baseline.toFloat(),
+                    gutterPaint
+                )
+            }
+            // Cursor + selection handles are drawn inside the loop
+            // so their coordinates come from the same measured pass
+            // as the text (no separate position walk).
+            if (isFocused && line == lineOfOffset(selEnd)) {
+                val local = selEnd - start
+                val row = layout.getLineForOffset(local)
+                val x = textLeft + layout.getPrimaryHorizontal(local)
+                if (!readOnly && selStart == selEnd && cursorVisible) {
+                    fillPaint.color = accentColor
+                    canvas.drawRect(
+                        x - 1, (y + layout.getLineTop(row)).toFloat(),
+                        x + 1 + density, (y + layout.getLineBottom(row)).toFloat(),
+                        fillPaint
+                    )
+                }
+                if (selStart != selEnd) {
+                    if (selectionStart in start..end) {
+                        drawHandleAt(canvas, layout, selectionStart - start, textLeft, y, above = true)
+                    }
+                    if (selectionEnd in start..end) {
+                        drawHandleAt(canvas, layout, selectionEnd - start, textLeft, y, above = false)
+                    }
+                }
+            }
+            y += layout.height
+            line++
+        }
+    }
+
+    private fun drawHandleAt(
+        canvas: Canvas,
+        layout: StaticLayout,
+        local: Int,
+        textLeft: Int,
+        lineTop: Int,
+        above: Boolean
+    ) {
+        val row = layout.getLineForOffset(local)
+        val x = textLeft + layout.getPrimaryHorizontal(local)
+        val cy = if (above) {
+            lineTop + layout.getLineTop(row) - 6 * density
+        } else {
+            lineTop + layout.getLineBottom(row) + 6 * density
+        }
+        fillPaint.color = accentColor
+        canvas.drawCircle(x, cy, 9 * density, fillPaint)
+    }
+
+    private fun drawSelection(
+        canvas: Canvas,
+        layout: StaticLayout,
+        lineStart: Int,
+        selA: Int,
+        selB: Int,
+        textLeft: Int,
+        lineTop: Int
+    ) {
+        val textLen = layout.text?.length ?: 0
+        val a = (selA - lineStart).coerceIn(0, textLen)
+        val b = (selB - lineStart).coerceIn(0, textLen)
+        if (b < a) return
+        fillPaint.color = selectionColor
+        for (r in 0 until layout.lineCount) {
+            val rowStart = layout.getLineStart(r)
+            val rowEnd = layout.getLineEnd(r)
+            val f = max(a, rowStart)
+            val t = min(b, rowEnd)
+            if (t < f) continue
+            val x1 = layout.getPrimaryHorizontal(f)
+            var x2 = layout.getPrimaryHorizontal(t)
+            if (t == rowEnd && selB > lineStart + rowEnd) {
+                x2 += 10 * density // selection continues past the wrap
+            }
+            canvas.drawRect(
+                textLeft + x1,
+                (lineTop + layout.getLineTop(r)).toFloat(),
+                textLeft + max(x2, x1 + 2),
+                (lineTop + layout.getLineBottom(r)).toFloat(),
+                fillPaint
+            )
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Cursor blink
+    // ------------------------------------------------------------------
+    private val blinkHandler = Handler(Looper.getMainLooper())
+    private var cursorVisible = true
+    private val blinkRunnable = object : Runnable {
+        override fun run() {
+            cursorVisible = !cursorVisible
+            invalidate()
+            blinkHandler.postDelayed(this, 530)
+        }
+    }
+
+    private fun restartCursorBlink() {
+        cursorVisible = true
+        blinkHandler.removeCallbacks(blinkRunnable)
+        if (isFocused) blinkHandler.postDelayed(blinkRunnable, 530)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw) {
+            // Wrap widths changed (rotation): every cached layout and
+            // measured height is stale.
+            layoutCache.clear()
+            for (i in lineHeights.indices) lineHeights[i] = -1
+            measuredSum = 0
+            measuredCount = 0
+            anchorLine = 0
+            anchorY = 0
+        }
+    }
+
+    override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+        super.onFocusChanged(focused, direction, previouslyFocusedRect)
+        if (focused) restartCursorBlink() else {
+            blinkHandler.removeCallbacks(blinkRunnable)
+            cursorVisible = true
+        }
+        invalidate()
+    }
+
+    override fun onDetachedFromWindow() {
+        blinkHandler.removeCallbacks(blinkRunnable)
+        super.onDetachedFromWindow()
+    }
+
+    // ------------------------------------------------------------------
+    // Hit testing
+    // ------------------------------------------------------------------
+    /** Offset at a view-space point (x, y). */
+    fun offsetAtPoint(x: Float, y: Float): Int {
+        val gutterW = gutterWidthPx()
+        val contentY = y - paddingTop + scrollYPos
+        // Walk from the draw anchor (the visible neighbourhood),
+        // never from line 0 — on a 50K-line file a tap must not
+        // measure the whole document.
+        var line = anchorLine.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+        var top = anchorY
+        if (contentY >= top) {
+            while (line < lineCount) {
+                val h = heightOf(line)
+                if (contentY < top + h) break
+                top += h
+                line++
+            }
+        } else {
+            while (line > 0 && contentY < top) {
+                line--
+                top -= heightOf(line)
+            }
+        }
+        if (line >= lineCount) return buffer.length
+        val layout = layoutForLine(line)
+        val row = ((contentY - top).toInt()).coerceAtLeast(0)
+        val visualRow = layout.getLineForVertical(row)
+        val localX = x - gutterW - paddingLeft + scrollXPos
+        val local = layout.getOffsetForHorizontal(visualRow, localX)
+        return (lineStart(line) + local).coerceIn(0, buffer.length)
+    }
+
+    private fun wordBounds(offset: Int): Pair<Int, Int> {
+        if (buffer.isEmpty()) return 0 to 0
+        var a = offset.coerceIn(0, buffer.length - 1)
+        var b = a
+        val isWord = { c: Char -> c.isLetterOrDigit() || c == '_' }
+        if (!isWord(buffer[a])) return offset to offset
+        while (a > 0 && isWord(buffer[a - 1])) a--
+        while (b < buffer.length && isWord(buffer[b])) b++
+        return a to b
+    }
+
+    // ------------------------------------------------------------------
+    // Touch / gestures
+    // ------------------------------------------------------------------
+    private var draggingHandle: Int = 0 // 0 none, 1 start, 2 end
+    private var actionMode: ActionMode? = null
+
+    private val gestureDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onScroll(
+                e1: MotionEvent?, e2: MotionEvent,
+                distanceX: Float, distanceY: Float
+            ): Boolean {
+                stopFling()
+                scrollYPos = (scrollYPos + distanceY.toInt())
+                    .coerceIn(0, maxScrollY())
+                if (!wordWrap) {
+                    scrollXPos = (scrollXPos + distanceX.toInt())
+                        .coerceIn(0, maxScrollX())
+                }
+                onScrollChanged?.invoke()
+                invalidate()
+                return true
+            }
+
+            override fun onFling(
+                e1: MotionEvent?, e2: MotionEvent,
+                velocityX: Float, velocityY: Float
+            ): Boolean {
+                val maxY = maxScrollY()
+                if (maxY > 0) {
+                    scroller.fling(
+                        scrollXPos, scrollYPos,
+                        -velocityX.toInt(), -velocityY.toInt(),
+                        0, maxScrollX(), 0, maxY
+                    )
+                    invalidate()
+                }
+                return true
+            }
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                requestFocus()
+                val off = offsetAtPoint(e.x, e.y)
+                setSelection(off)
+                if (!readOnly) showKeyboard()
+                actionMode?.finish()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val off = offsetAtPoint(e.x, e.y)
+                val (a, b) = wordBounds(off)
+                if (b > a) {
+                    setSelection(a, b)
+                    startTextActionMode()
+                }
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                if (readOnly) return
+                val off = offsetAtPoint(e.x, e.y)
+                val (a, b) = wordBounds(off)
+                if (b > a) setSelection(a, b) else setSelection(off)
+                startTextActionMode()
+            }
+        }
+    )
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Handle drags take precedence near selection ends.
+                draggingHandle = handleAt(event.x, event.y)
+                if (draggingHandle != 0) return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (draggingHandle != 0) {
+                    val off = offsetAtPoint(event.x, event.y)
+                    if (draggingHandle == 1) {
+                        selStart = off
+                        if (selStart > selEnd) {
+                            val t = selStart; selStart = selEnd; selEnd = t
+                            draggingHandle = 2
+                        }
+                    } else {
+                        selEnd = off
+                        if (selEnd < selStart) {
+                            val t = selStart; selStart = selEnd; selEnd = t
+                            draggingHandle = 1
+                        }
+                    }
+                    scrollToOffset(off)
+                    onSelectionChanged?.invoke()
+                    invalidate()
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (draggingHandle != 0) {
+                    draggingHandle = 0
+                    if (selStart != selEnd) startTextActionMode()
+                    return true
+                }
+            }
+        }
+        return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
+    }
+
+    private fun handleAt(x: Float, y: Float): Int {
+        if (selStart == selEnd) return 0
+        val r = 28 * density
+        val gutterW = gutterWidthPx()
+        for ((offset, which) in listOf(selectionStart to 1, selectionEnd to 2)) {
+            val line = lineOfOffset(offset)
+            val top = lineTopEstimate(line) - scrollYPos + paddingTop
+            val layout = layoutForLine(line)
+            val row = layout.getLineForOffset(offset - lineStart(line))
+            val hx = gutterW + paddingLeft - scrollXPos +
+                layout.getPrimaryHorizontal(offset - lineStart(line))
+            val hy = top + layout.getLineTop(row) + 
+                (layout.getLineBottom(row) - layout.getLineTop(row)) / 2
+            if (abs(x - hx) <= r && abs(y - hy) <= r + 10 * density) return which
+        }
+        return 0
+    }
+
+    // ------------------------------------------------------------------
+    // Clipboard / action mode
+    // ------------------------------------------------------------------
+    private fun clipboard(): ClipboardManager =
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+
+    fun copySelection() {
+        if (selStart == selEnd) return
+        val a = selectionStart
+        val b = selectionEnd
+        clipboard().setPrimaryClip(
+            ClipData.newPlainText("EditNote", buffer.substring(a, b))
+        )
+    }
+
+    fun cutSelection() {
+        if (readOnly || selStart == selEnd) return
+        copySelection()
+        replaceRange(selectionStart, selectionEnd, "")
+    }
+
+    fun pasteClipboard() {
+        if (readOnly) return
+        val clip = clipboard().primaryClip ?: return
+        if (clip.itemCount == 0) return
+        val text = clip.getItemAt(0).coerceToText(context)?.toString() ?: return
+        replaceRange(selectionStart, selectionEnd, text)
+    }
+
+    fun selectAllText() {
+        setSelection(0, buffer.length)
+    }
+
+    private fun startTextActionMode() {
+        actionMode?.finish()
+        actionMode = startActionMode(object : ActionMode.Callback {
+            override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                return true // items are built in onPrepareActionMode
+            }
+
+            override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+                menu.clear()
+                if (selStart != selEnd) {
+                    menu.add(0, 1, 0, "Cut").setEnabled(!readOnly)
+                    menu.add(0, 2, 1, "Copy")
+                }
+                menu.add(0, 3, 2, "Paste").setEnabled(!readOnly)
+                menu.add(0, 4, 3, "Select all")
+                return true
+            }
+
+            override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+                when (item.itemId) {
+                    1 -> cutSelection()
+                    2 -> copySelection()
+                    3 -> pasteClipboard()
+                    4 -> selectAllText()
+                }
+                if (item.itemId != 4) mode.finish()
+                return true
+            }
+
+            override fun onDestroyActionMode(mode: ActionMode) {
+                if (actionMode === mode) actionMode = null
+            }
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Keyboard / IME
+    // ------------------------------------------------------------------
+    fun showKeyboard() {
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE)
+            as InputMethodManager
+        imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    fun hideKeyboard() {
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE)
+            as InputMethodManager
+        imm.hideSoftInputFromWindow(windowToken, 0)
+    }
+
+    override fun onCheckIsTextEditor(): Boolean = true
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
+            InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        if (noSuggestions) {
+            outAttrs.inputType = outAttrs.inputType or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        if (autoCapitalize) {
+            outAttrs.inputType = outAttrs.inputType or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+            EditorInfo.IME_ACTION_NONE
+        return object : BaseInputConnection(this, true) {
+            override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
+                if (readOnly) return true
+                val ins = text.toString()
+                val a = if (composingStart >= 0) composingStart else selectionStart
+                val b = if (composingStart >= 0) composingEnd else selectionEnd
+                replaceRange(a, b, ins)
+                return true
+            }
+
+            override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
+                if (readOnly) return true
+                val ins = text.toString()
+                val a = if (composingStart >= 0) composingStart else selectionStart
+                val b = if (composingStart >= 0) composingEnd else selectionEnd
+                // Apply the edit, then re-mark the composing range.
+                val start = a
+                buffer.replace(a, b, ins)
+                rebuildLineIndexAfterComposing(a, b, ins)
+                composingStart = start
+                composingEnd = start + ins.length
+                selStart = composingEnd
+                selEnd = composingEnd
+                layoutCache.clear()
+                onTextChanged?.invoke(a, b - a, ins)
+                invalidate()
+                return true
+            }
+
+            override fun finishComposingText(): Boolean {
+                composingStart = -1
+                composingEnd = -1
+                layoutCache.clear()
+                invalidate()
+                return true
+            }
+
+            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                if (readOnly) return true
+                if (selStart != selEnd) {
+                    replaceRange(selectionStart, selectionEnd, "")
+                    return true
+                }
+                val cursor = selEnd
+                val a = (cursor - beforeLength).coerceAtLeast(0)
+                val b = (cursor + afterLength).coerceAtMost(buffer.length)
+                if (a < cursor || b > cursor) {
+                    replaceRange(a, b, "")
+                    setSelection(a)
+                }
+                return true
+            }
+
+            override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence {
+                val cursor = selStart
+                return buffer.substring((cursor - n).coerceAtLeast(0), cursor)
+            }
+
+            override fun getTextAfterCursor(n: Int, flags: Int): CharSequence {
+                val cursor = selEnd
+                return buffer.substring(cursor, (cursor + n).coerceAtMost(buffer.length))
+            }
+
+            override fun getSelectedText(flags: Int): CharSequence {
+                if (selStart == selEnd) return ""
+                return buffer.substring(selectionStart, selectionEnd)
+            }
+
+            override fun setSelection(start: Int, end: Int): Boolean {
+                this@FastEditorView.setSelection(start, end)
+                return true
+            }
+
+            override fun sendKeyEvent(event: KeyEvent): Boolean {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    when (event.keyCode) {
+                        KeyEvent.KEYCODE_DEL -> {
+                            deleteSurroundingText(1, 0)
+                            return true
+                        }
+                        KeyEvent.KEYCODE_FORWARD_DEL -> {
+                            deleteSurroundingText(0, 1)
+                            return true
+                        }
+                        KeyEvent.KEYCODE_ENTER -> {
+                            commitText("\n", 1)
+                            return true
+                        }
+                    }
+                }
+                return super.sendKeyEvent(event)
+            }
+        }
+    }
+
+    /** Composing edits bypass replaceRange (the composing range must
+     *  survive the edit), so the line index is rebuilt wholesale —
+     *  a tight O(n) char scan, a millisecond-scale cost per update. */
+    private fun rebuildLineIndexAfterComposing(a: Int, b: Int, ins: String) {
+        rebuildLineIndex()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (readOnly) return super.onKeyDown(keyCode, event)
+        when (keyCode) {
+            KeyEvent.KEYCODE_DEL -> {
+                if (selStart != selEnd) replaceRange(selectionStart, selectionEnd, "")
+                else if (selStart > 0) {
+                    replaceRange(selStart - 1, selStart, "")
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_FORWARD_DEL -> {
+                if (selStart != selEnd) replaceRange(selectionStart, selectionEnd, "")
+                else if (selEnd < buffer.length) replaceRange(selEnd, selEnd + 1, "")
+                return true
+            }
+            KeyEvent.KEYCODE_ENTER -> {
+                replaceRange(selectionStart, selectionEnd, "\n")
+                return true
+            }
+            KeyEvent.KEYCODE_TAB -> {
+                replaceRange(selectionStart, selectionEnd, "\t")
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                setSelection((selStart - 1).coerceAtLeast(0))
+                ensureCursorVisible()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                setSelection((selEnd + 1).coerceAtMost(buffer.length))
+                ensureCursorVisible()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                moveCursorLine(if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1)
+                return true
+            }
+        }
+        if (event.unicodeChar != 0 && !event.isCtrlPressed) {
+            replaceRange(
+                selectionStart, selectionEnd,
+                event.unicodeChar.toChar().toString()
+            )
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun moveCursorLine(delta: Int) {
+        val line = lineOfOffset(selEnd)
+        val target = (line + delta).coerceIn(0, lineCount - 1)
+        val col = selEnd - lineStart(line)
+        val newPos = min(lineStart(target) + col, lineEnd(target))
+        setSelection(newPos)
+        ensureCursorVisible()
+    }
+
+    init {
+        isFocusable = true
+        isFocusableInTouchMode = true
+        isClickable = true
+        isLongClickable = true
+    }
+}

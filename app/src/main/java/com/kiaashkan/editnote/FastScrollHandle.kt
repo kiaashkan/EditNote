@@ -6,7 +6,6 @@ import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import android.widget.EditText
 
 /**
  * A slim drag handle on the editor's right edge for scrubbing through
@@ -21,7 +20,7 @@ class FastScrollHandle @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    var editor: EditText? = null
+    var editor: FastEditorView.ScrollSurface? = null
     var accentColor: Int = 0xFFF46658.toInt()
 
     /** Fired when the user grabs the pill (the activity cancels any
@@ -31,17 +30,12 @@ class FastScrollHandle @JvmOverloads constructor(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var dragging = false
 
-    private fun maxScroll(): Int {
-        val ed = editor ?: return 0
-        val layout = ed.layout ?: return 0
-        val content = ed.paddingTop + layout.height + ed.paddingBottom
-        return (content - ed.height).coerceAtLeast(0)
-    }
+    private fun maxScroll(): Int = editor?.maxScrollPos ?: 0
 
     private fun thumbHeight(max: Int): Float {
         val ed = editor ?: return 0f
-        val content = max + ed.height
-        val frac = if (content > 0) ed.height.toFloat() / content else 1f
+        val content = max + ed.viewportH
+        val frac = if (content > 0) ed.viewportH.toFloat() / content else 1f
         val min = 48 * resources.displayMetrics.density
         return (height * frac).coerceAtLeast(min).coerceAtMost(height.toFloat())
     }
@@ -53,7 +47,7 @@ class FastScrollHandle @JvmOverloads constructor(
         if (max <= 0 || height == 0) return
         val thumbH = thumbHeight(max)
         val travel = height - thumbH
-        val y = if (travel > 0) travel * (ed.scrollY.toFloat() / max) else 0f
+        val y = if (travel > 0) travel * (ed.scrollPosY.toFloat() / max) else 0f
         val w = 6 * resources.displayMetrics.density
         val inset = 3 * resources.displayMetrics.density
         paint.color = accentColor
@@ -74,7 +68,7 @@ class FastScrollHandle @JvmOverloads constructor(
                 val thumbH = thumbHeight(max)
                 val travel = height - thumbH
                 val top = if (travel > 0) {
-                    travel * (ed.scrollY.toFloat() / max)
+                    travel * (ed.scrollPosY.toFloat() / max)
                 } else {
                     0f
                 }
@@ -106,7 +100,7 @@ class FastScrollHandle @JvmOverloads constructor(
     private fun scrub(y: Float, max: Int) {
         val ed = editor ?: return
         val frac = (y / height).coerceIn(0f, 1f)
-        ed.scrollTo(0, (frac * max).toInt())
+        ed.scrollToPos((frac * max).toInt())
         invalidate()
     }
 }

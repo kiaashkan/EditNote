@@ -250,24 +250,47 @@ object SyntaxHighlighter {
         else -> BY_ID[choice] ?: languageForExtension(fileName)
     }
 
-    fun apply(text: Spannable, lang: Lang, style: EditorStyle) {
-        text.getSpans(0, text.length, ForegroundColorSpan::class.java)
-            .forEach { text.removeSpan(it) }
-        if (text.isEmpty() || text.length > MAX_LENGTH) return
-        val source = text.toString()
+    /** One coloured range: [from, to) in [color]. */
+    class Range(val from: Int, val to: Int, val color: Int)
+
+    /**
+     * Compute the highlight ranges for [source] WITHOUT touching any
+     * Spannable — pure string work, safe (and intended) to run on a
+     * background thread. KiA's hang (item 50): running the scan and
+     * the span writes on the UI thread froze the app on a large code
+     * file; now only the final batched span write is on the UI thread.
+     */
+    fun compute(source: String, lang: Lang, style: EditorStyle): List<Range> {
+        if (source.isEmpty() || source.length > MAX_LENGTH) return emptyList()
+        val out = ArrayList<Range>()
         when (lang.id) {
-            "html", "xml" -> markMarkup(text, source, style)
-            "markdown" -> markMarkdown(text, source, style)
-            "json" -> markJson(text, source, style)
-            "css" -> markCss(text, source, lang, style)
-            "ini", "yaml" -> markConfig(text, source, lang, style)
-            else -> scan(text, source, lang, style)
+            "html", "xml" -> markMarkup(out, source, style)
+            "markdown" -> markMarkdown(out, source, style)
+            "json" -> markJson(out, source, style)
+            "css" -> markCss(out, source, lang, style)
+            "ini", "yaml" -> markConfig(out, source, lang, style)
+            else -> scan(out, source, lang, style)
         }
+        return out
+    }
+
+    /** Write precomputed [ranges] onto [text] in one batch. */
+    fun applyRanges(text: Spannable, ranges: List<Range>) {
+        clear(text)
+        for (r in ranges) span(text, r.color, r.from, r.to)
+    }
+
+    fun apply(text: Spannable, lang: Lang, style: EditorStyle) {
+        applyRanges(text, compute(text.toString(), lang, style))
     }
 
     fun clear(text: Spannable) {
         text.getSpans(0, text.length, ForegroundColorSpan::class.java)
             .forEach { text.removeSpan(it) }
+    }
+
+    private fun span(out: MutableList<Range>, color: Int, from: Int, to: Int) {
+        if (to > from && from >= 0) out.add(Range(from, to, color))
     }
 
     private fun span(text: Spannable, color: Int, from: Int, to: Int) {
@@ -283,7 +306,7 @@ object SyntaxHighlighter {
         c.isLetterOrDigit() || c == '_' || (lang.variables && c == '$')
 
     /** Generic scanner for code-like languages. */
-    private fun scan(text: Spannable, src: String, lang: Lang, style: EditorStyle) {
+    private fun scan(out: MutableList<Range>, src: String, lang: Lang, style: EditorStyle) {
         val n = src.length
         var i = 0
         var lineStart = true
@@ -292,7 +315,7 @@ object SyntaxHighlighter {
             // Preprocessor (#include …) for C-family languages.
             if (lang.preprocessor && lineStart && c == '#') {
                 var end = src.indexOf('\n', i).let { if (it < 0) n else it }
-                span(text, style.property, i, end)
+                span(out, style.property, i, end)
                 i = end
                 continue
             }
@@ -301,7 +324,7 @@ object SyntaxHighlighter {
             if (block != null && src.startsWith(block.first, i)) {
                 val close = src.indexOf(block.second, i + block.first.length)
                 val end = if (close < 0) n else close + block.second.length
-                span(text, style.comment, i, end)
+                span(out, style.comment, i, end)
                 i = end
                 lineStart = false
                 continue
@@ -310,7 +333,7 @@ object SyntaxHighlighter {
             val lineComment = lang.lineComments.firstOrNull { src.startsWith(it, i) }
             if (lineComment != null) {
                 var end = src.indexOf('\n', i).let { if (it < 0) n else it }
-                span(text, style.comment, i, end)
+                span(out, style.comment, i, end)
                 i = end
                 continue
             }
@@ -319,7 +342,7 @@ object SyntaxHighlighter {
             if (triple != null) {
                 val close = src.indexOf(triple, i + triple.length)
                 val end = if (close < 0) n else close + triple.length
-                span(text, style.string, i, end)
+                span(out, style.string, i, end)
                 i = end
                 lineStart = false
                 continue
@@ -345,7 +368,7 @@ object SyntaxHighlighter {
                     j++
                 }
                 if (closed) {
-                    span(text, style.string, i, j + 1)
+                    span(out, style.string, i, j + 1)
                     i = j + 1
                     lineStart = false
                     continue
@@ -360,7 +383,7 @@ object SyntaxHighlighter {
             ) {
                 var j = i + 1
                 while (j < n && (src[j].isLetterOrDigit() || src[j] == '_')) j++
-                span(text, style.property, i, j)
+                span(out, style.property, i, j)
                 i = j
                 lineStart = false
                 continue
@@ -369,7 +392,7 @@ object SyntaxHighlighter {
             if (c.isDigit() && (i == 0 || !isWordChar(src[i - 1], lang))) {
                 var j = i
                 while (j < n && (src[j].isLetterOrDigit() || src[j] == '.' || src[j] == '_')) j++
-                span(text, style.number, i, j)
+                span(out, style.number, i, j)
                 i = j
                 lineStart = false
                 continue
@@ -381,8 +404,8 @@ object SyntaxHighlighter {
                 val word = src.substring(i, j)
                 val probe = if (lang.caseInsensitive) word.uppercase() else word
                 when {
-                    probe in lang.keywords -> span(text, style.keyword, i, j)
-                    word in lang.builtins -> span(text, style.property, i, j)
+                    probe in lang.keywords -> span(out, style.keyword, i, j)
+                    word in lang.builtins -> span(out, style.property, i, j)
                 }
                 i = j
                 lineStart = false
@@ -394,14 +417,14 @@ object SyntaxHighlighter {
     }
 
     /** HTML/XML: tags, attribute names, attribute values, comments. */
-    private fun markMarkup(text: Spannable, src: String, style: EditorStyle) {
+    private fun markMarkup(out: MutableList<Range>, src: String, style: EditorStyle) {
         val n = src.length
         var i = 0
         while (i < n) {
             if (src.startsWith("<!--", i)) {
                 val close = src.indexOf("-->", i + 4)
                 val end = if (close < 0) n else close + 3
-                span(text, style.comment, i, end)
+                span(out, style.comment, i, end)
                 i = end
                 continue
             }
@@ -411,20 +434,20 @@ object SyntaxHighlighter {
                 if (j < n && src[j] == '/') j++
                 val nameStart = j
                 while (j < n && (src[j].isLetterOrDigit() || src[j] in "-_:.")) j++
-                if (j > nameStart) span(text, style.tag, nameStart, j)
+                if (j > nameStart) span(out, style.tag, nameStart, j)
                 while (j < n && src[j] != '>') {
                     val cj = src[j]
                     if (cj == '"' || cj == '\'') {
                         var k = j + 1
                         while (k < n && src[k] != cj) k++
-                        span(text, style.string, j, minOf(k + 1, n))
+                        span(out, style.string, j, minOf(k + 1, n))
                         j = minOf(k + 1, n)
                         continue
                     }
                     if (cj.isLetter() || cj == '_' || cj == ':') {
                         var k = j
                         while (k < n && (src[k].isLetterOrDigit() || src[k] in "-_:.")) k++
-                        span(text, style.property, j, k)
+                        span(out, style.property, j, k)
                         j = k
                         continue
                     }
@@ -438,37 +461,37 @@ object SyntaxHighlighter {
     }
 
     /** JSON: keys in property colour, strings, numbers, literals. */
-    private fun markJson(text: Spannable, src: String, style: EditorStyle) {
+    private fun markJson(out: MutableList<Range>, src: String, style: EditorStyle) {
         val stringRe = Regex("\"([^\"\\\\]|\\\\.)*\"")
         stringRe.findAll(src).forEach { m ->
             val after = src.substring(m.range.last + 1).trimStart()
             val color = if (after.startsWith(":")) style.property else style.string
-            span(text, color, m.range.first, m.range.last + 1)
+            span(out, color, m.range.first, m.range.last + 1)
         }
         Regex("\\b(-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?)\\b").findAll(src).forEach {
-            span(text, style.number, it.range.first, it.range.last + 1)
+            span(out, style.number, it.range.first, it.range.last + 1)
         }
         Regex("\\b(true|false|null)\\b").findAll(src).forEach {
-            span(text, style.keyword, it.range.first, it.range.last + 1)
+            span(out, style.keyword, it.range.first, it.range.last + 1)
         }
     }
 
     /** CSS: comments/strings via the generic pass, properties + selectors. */
-    private fun markCss(text: Spannable, src: String, lang: Lang, style: EditorStyle) {
-        scan(text, src, lang, style)
+    private fun markCss(out: MutableList<Range>, src: String, lang: Lang, style: EditorStyle) {
+        scan(out, src, lang, style)
         // Property names: word followed by ':' inside a rule body.
         Regex("([a-zA-Z-]+)\\s*:").findAll(src).forEach {
             val g = it.groups[1] ?: return@forEach
-            span(text, style.property, g.range.first, g.range.last + 1)
+            span(out, style.property, g.range.first, g.range.last + 1)
         }
         // At-rules.
         Regex("@[a-zA-Z-]+").findAll(src).forEach {
-            span(text, style.keyword, it.range.first, it.range.last + 1)
+            span(out, style.keyword, it.range.first, it.range.last + 1)
         }
     }
 
     /** INI/YAML: comments, section headers, keys, strings, numbers. */
-    private fun markConfig(text: Spannable, src: String, lang: Lang, style: EditorStyle) {
+    private fun markConfig(out: MutableList<Range>, src: String, lang: Lang, style: EditorStyle) {
         var pos = 0
         val n = src.length
         while (pos < n) {
@@ -478,9 +501,9 @@ object SyntaxHighlighter {
             val lead = line.length - trimmed.length
             when {
                 trimmed.startsWith("#") || trimmed.startsWith(";") ->
-                    span(text, style.comment, pos, lineEnd)
+                    span(out, style.comment, pos, lineEnd)
                 trimmed.startsWith("[") && trimmed.contains("]") ->
-                    span(text, style.tag, pos + lead, pos + lead + trimmed.indexOf(']') + 1)
+                    span(out, style.tag, pos + lead, pos + lead + trimmed.indexOf(']') + 1)
                 else -> {
                     val sep = if (lang.id == "yaml") trimmed.indexOf(':')
                     else minOf(
@@ -488,16 +511,16 @@ object SyntaxHighlighter {
                         trimmed.indexOf(':').let { if (it < 0) Int.MAX_VALUE else it }
                     )
                     if (sep in 1..60) {
-                        span(text, style.property, pos + lead, pos + lead + sep)
+                        span(out, style.property, pos + lead, pos + lead + sep)
                         // Value side: strings, numbers, booleans.
                         val value = trimmed.substring(sep + 1)
                         val valueStart = pos + lead + sep + 1
                         Regex("\"[^\"]*\"|'[^']*'").findAll(value).forEach {
-                            span(text, style.string, valueStart + it.range.first, valueStart + it.range.last + 1)
+                            span(out, style.string, valueStart + it.range.first, valueStart + it.range.last + 1)
                         }
                         Regex("\\b(\\d+(\\.\\d+)?|true|false)\\b").findAll(value).forEach {
                             val color = if (it.value in setOf("true", "false")) style.keyword else style.number
-                            span(text, color, valueStart + it.range.first, valueStart + it.range.last + 1)
+                            span(out, color, valueStart + it.range.first, valueStart + it.range.last + 1)
                         }
                     }
                 }
@@ -507,21 +530,21 @@ object SyntaxHighlighter {
     }
 
     /** Markdown: headings, code, links, emphasis markers. */
-    private fun markMarkdown(text: Spannable, src: String, style: EditorStyle) {
+    private fun markMarkdown(out: MutableList<Range>, src: String, style: EditorStyle) {
         Regex("(?m)^#{1,6}\\s.*$").findAll(src).forEach {
-            span(text, style.tag, it.range.first, it.range.last + 1)
+            span(out, style.tag, it.range.first, it.range.last + 1)
         }
         Regex("`[^`\\n]+`").findAll(src).forEach {
-            span(text, style.string, it.range.first, it.range.last + 1)
+            span(out, style.string, it.range.first, it.range.last + 1)
         }
         Regex("(?ms)^```.*?(^```|\\z)").findAll(src).forEach {
-            span(text, style.string, it.range.first, it.range.last + 1)
+            span(out, style.string, it.range.first, it.range.last + 1)
         }
         Regex("\\[[^\\]]*\\]\\([^)]*\\)").findAll(src).forEach {
-            span(text, style.property, it.range.first, it.range.last + 1)
+            span(out, style.property, it.range.first, it.range.last + 1)
         }
         Regex("(?m)^\\s{0,3}([-*+]|\\d+\\.)\\s").findAll(src).forEach {
-            span(text, style.number, it.range.first, it.range.last + 1)
+            span(out, style.number, it.range.first, it.range.last + 1)
         }
     }
 }

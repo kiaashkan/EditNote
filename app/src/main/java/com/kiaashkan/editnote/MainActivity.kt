@@ -56,14 +56,15 @@ class MainActivity : Activity() {
         adapter = RecentAdapter()
         listView.adapter = adapter
 
-        listView.setOnItemClickListener { _, _, position, _ ->
-            val entry = adapter.getItem(position)
+        // Row-level listeners (set in the adapter), NOT ListView item
+        // listeners: an item click can be swallowed when a row hosts
+        // interactive children, and KiA's recents stopped opening
+        // twice because of it (items 43/49). A listener on the row
+        // view itself cannot be intercepted that way.
+        adapter.onOpen = { entry ->
             startActivity(EditorActivity.externalIntent(this, Uri.parse(entry.uri), entry.name))
         }
-        listView.setOnItemLongClickListener { _, _, position, _ ->
-            showEntryActions(adapter.getItem(position))
-            true
-        }
+        adapter.onActions = { entry -> showEntryActions(entry) }
 
         searchBox.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) = refresh()
@@ -442,6 +443,10 @@ class MainActivity : Activity() {
     }
 
     private inner class RecentAdapter : BaseAdapter() {
+
+        var onOpen: ((RecentFiles.Entry) -> Unit)? = null
+        var onActions: ((RecentFiles.Entry) -> Unit)? = null
+
         private var items: List<RecentFiles.Entry> = emptyList()
 
         fun submit(entries: List<RecentFiles.Entry>) {
@@ -480,6 +485,11 @@ class MainActivity : Activity() {
             star.setOnClickListener {
                 recents.setBookmarked(entry.uri, !entry.bookmarked)
                 refresh()
+            }
+            view.setOnClickListener { onOpen?.invoke(entry) }
+            view.setOnLongClickListener {
+                onActions?.invoke(entry)
+                true
             }
             preview.text = "Device file"
             preview.setTextColor(palette.textSecondary)

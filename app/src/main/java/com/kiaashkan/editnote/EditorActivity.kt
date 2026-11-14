@@ -68,9 +68,7 @@ class EditorActivity : Activity() {
 
     private lateinit var settings: AppSettings
     private lateinit var palette: Palette
-    private lateinit var editor: EditText
-    private lateinit var lineNumbers: LineNumbersView
-    private lateinit var gutter: View
+    private lateinit var editor: FastEditorView
     private lateinit var fastScroll: FastScrollHandle
     private lateinit var titleView: TextView
     private lateinit var statusView: TextView
@@ -103,65 +101,9 @@ class EditorActivity : Activity() {
     private var undoSnapshotChars = 0
     private var editedSinceBaseline = false
 
-    // Momentum glide (KiA, item 34): a stock EditText fling does not
-    // scale to a huge file — a flick dies within a screen or two, so
-    // the user has to drag the whole way. We observe the flick
-    // (never consuming touches), and once the native fling settles,
-    // an extension glide carries the scroll on with a decelerating
-    // animator. Any new touch or handle-grab cancels it.
-    private var glideAnimator: ValueAnimator? = null
-    private var editorTouching = false
-    private val dragSamples = ArrayDeque<Pair<Long, Int>>()
-    private var releaseVelocity = 0f
-    private var lastScrollChangeAt = 0L
-    private var glideSettleTries = 0
-    private val glideSettleRunnable = object : Runnable {
-        override fun run() {
-            if (editorTouching) return
-            val idle = SystemClock.uptimeMillis() - lastScrollChangeAt
-            if (idle < 150) {
-                if (glideSettleTries < 12) {
-                    glideSettleTries++
-                    handler.postDelayed(this, 100)
-                }
-                // Still moving after ~1.4 s: the native fling is long
-                // enough on its own — do not stack a second glide.
-                return
-            }
-            startExtensionGlide()
-        }
-    }
-
-    private fun cancelGlide() {
-        glideAnimator?.cancel()
-        glideAnimator = null
-        handler.removeCallbacks(glideSettleRunnable)
-    }
-
-    private fun editorMaxScroll(): Int {
-        val layout = editor.layout ?: return 0
-        val content = editor.paddingTop + layout.height + editor.paddingBottom
-        return (content - editor.height).coerceAtLeast(0)
-    }
-
-    private fun startExtensionGlide() {
-        val v = releaseVelocity
-        releaseVelocity = 0f
-        if (kotlin.math.abs(v) < 1500f) return
-        val max = editorMaxScroll()
-        if (max <= 0) return
-        val startY = editor.scrollY
-        val target = (startY + (v * 1.6f).toInt()).coerceIn(0, max)
-        if (kotlin.math.abs(target - startY) < editor.height / 2) return
-        glideAnimator = ValueAnimator.ofInt(startY, target).apply {
-            duration = 750
-            interpolator = DecelerateInterpolator(1.8f)
-            addUpdateListener { anim ->
-                editor.scrollTo(0, anim.animatedValue as Int)
-            }
-            start()
-        }
-    }
+    // Scrolling lives inside the FastEditorView engine now (item
+    // 51): its own OverScroller fling replaced the old observe-and-
+    // extend glide machinery that patched the stock EditText.
 
     private val handler = Handler(Looper.getMainLooper())
     private val autosaveRunnable = Runnable {
@@ -174,7 +116,7 @@ class EditorActivity : Activity() {
         }
     }
     private val historyRunnable = Runnable {
-        val current = editor.text.toString()
+        val current = editor.textString()
         if (current != baseline) {
             pushUndoSnapshot(baseline)
             redoStack.clear()
@@ -205,12 +147,9 @@ class EditorActivity : Activity() {
         appliedSignature = ThemeHelper.signature(this)
 
         editor = findViewById(R.id.editor)
-        lineNumbers = findViewById(R.id.lineNumbers)
-        lineNumbers.editor = editor
         fastScroll = findViewById(R.id.fastScroll)
         fastScroll.editor = editor
         fastScroll.accentColor = palette.accent
-        gutter = findViewById(R.id.gutterFrame)
         titleView = findViewById(R.id.fileTitle)
         statusView = findViewById(R.id.saveStatus)
         tabStrip = findViewById(R.id.tabStrip)
@@ -218,9 +157,10 @@ class EditorActivity : Activity() {
         accessoryBar = findViewById(R.id.accessoryBar)
         titleView.setTextColor(palette.textPrimary)
         statusView.setTextColor(palette.textSecondary)
-        lineNumbers.setTextColor(palette.textSecondary)
-        gutter.setBackgroundColor(palette.alt)
-        editor.setTextColor(palette.textPrimary)
+        editor.gutterColor = palette.textSecondary
+        editor.gutterBackground = palette.alt
+        editor.textColor = palette.textPrimary
+        editor.accentColor = palette.accent
 
         docs.addAll(resolveInitialDocs())
         if (docs.isEmpty()) docs.add(newDraftDoc("Untitled"))
@@ -231,86 +171,46 @@ class EditorActivity : Activity() {
         buildAccessoryBar()
         renderTabs()
 
-        editor.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-                refreshLineNumbers()
-                if (suppress) return
-                val doc = docs.getOrNull(active) ?: return
-                doc.dirty = true
-                editedSinceBaseline = true
-                lastFindIndex = -1
-                if (!doc.needsDestination) statusView.text = "Unsaved changes"
-                handler.removeCallbacks(historyRunnable)
-                handler.postDelayed(historyRunnable, HISTORY_DELAY_MS)
-                if (settings.autosave) {
-                    handler.removeCallbacks(autosaveRunnable)
-                    handler.postDelayed(
-                        autosaveRunnable,
-                        settings.autosaveIntervalSec * 1000L
-                    )
-                }
-                handler.removeCallbacks(highlightRunnable)
-                handler.postDelayed(highlightRunnable, HIGHLIGHT_DELAY_MS)
-                updateUndoRedoButtons()
-                renderTabs()
-                if (::findBar.isInitialized && findBar.visibility == View.VISIBLE) {
-                    refreshFindCounter()
-                }
+        // The engine reports edits through one listener; it replaces
+        // the old TextWatcher pair (auto-indent hook first, then the
+        // after-change bookkeeping, same order as before).
+        editor.onTextChanged = { start, _, inserted ->
+            if (!suppress && !applyingIndent && settings.autoIndent &&
+                inserted == "\n"
+            ) {
+                applyAutoIndent(start)
             }
-
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                if (suppress || applyingIndent || !settings.autoIndent) return
-                if (count == 1 && s != null && start in s.indices && s[start] == '\n') {
-                    applyAutoIndent(start)
-                }
-            }
-        })
-        editor.setOnScrollChangeListener { _, scrollY, _, _, _ ->
-            lineNumbers.invalidate()
-            fastScroll.invalidate()
-            lastScrollChangeAt = SystemClock.uptimeMillis()
-            if (editorTouching) {
-                dragSamples.addLast(lastScrollChangeAt to scrollY)
-                while (dragSamples.size > 2 &&
-                    lastScrollChangeAt - dragSamples.first().first > 120
-                ) {
-                    dragSamples.removeFirst()
-                }
-            }
-        }
-        // Observation only — returning false keeps the editor's own
-        // touch handling (selection, native fling) fully intact.
-        editor.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    cancelGlide()
-                    editorTouching = true
-                    dragSamples.clear()
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    editorTouching = false
-                    if (dragSamples.size >= 2) {
-                        val (t0, y0) = dragSamples.first()
-                        val (t1, y1) = dragSamples.last()
-                        val dt = t1 - t0
-                        releaseVelocity = if (dt > 0) {
-                            (y1 - y0) * 1000f / dt
-                        } else {
-                            0f
-                        }
-                    } else {
-                        releaseVelocity = 0f
+            refreshLineNumbers()
+            if (!suppress) {
+                val doc = docs.getOrNull(active)
+                if (doc != null) {
+                    doc.dirty = true
+                    editedSinceBaseline = true
+                    lastFindIndex = -1
+                    if (!doc.needsDestination) {
+                        statusView.text = "Unsaved changes"
                     }
-                    glideSettleTries = 0
-                    handler.removeCallbacks(glideSettleRunnable)
-                    handler.postDelayed(glideSettleRunnable, 180)
+                    handler.removeCallbacks(historyRunnable)
+                    handler.postDelayed(historyRunnable, HISTORY_DELAY_MS)
+                    if (settings.autosave) {
+                        handler.removeCallbacks(autosaveRunnable)
+                        handler.postDelayed(
+                            autosaveRunnable,
+                            settings.autosaveIntervalSec * 1000L
+                        )
+                    }
+                    handler.removeCallbacks(highlightRunnable)
+                    handler.postDelayed(highlightRunnable, HIGHLIGHT_DELAY_MS)
+                    updateUndoRedoButtons()
+                    renderTabs()
+                    if (::findBar.isInitialized && findBar.visibility == View.VISIBLE) {
+                        refreshFindCounter()
+                    }
                 }
             }
-            false
         }
-        fastScroll.onGrab = { cancelGlide() }
+        editor.onScrollChanged = { fastScroll.invalidate() }
+        fastScroll.onGrab = { editor.stopFling() }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finishWithSave() }
         findViewById<ImageButton>(R.id.btnFileMenu).setOnClickListener { showFileMenu(it) }
@@ -430,17 +330,17 @@ class EditorActivity : Activity() {
     private fun stashActive() {
         val doc = docs.getOrNull(active) ?: return
         if (!suppress) {
-            doc.text = editor.text.toString()
+            doc.text = editor.textString()
             doc.selection = editor.selectionStart
         }
     }
 
     private fun loadDocIntoEditor(doc: Doc) {
         suppress = true
-        editor.setText(doc.text)
-        editor.setSelection(doc.selection.coerceIn(0, editor.text.length))
+        editor.setTextContent(doc.text)
+        editor.setSelection(doc.selection.coerceIn(0, editor.textLength()))
         suppress = false
-        cancelGlide()
+        editor.stopFling()
         baseline = doc.text
         undoStack.clear()
         undoSnapshotChars = 0
@@ -463,7 +363,7 @@ class EditorActivity : Activity() {
         // the Options menu can still force wrap back on for the
         // session. Small files are untouched.
         val large = doc.text.length > LARGE_FILE_CHARS
-        editor.setHorizontallyScrolling(!settings.wordWrap || large)
+        editor.wordWrap = settings.wordWrap && !large
         if (large && settings.wordWrap && !doc.largeWrapToastShown) {
             doc.largeWrapToastShown = true
             Toast.makeText(
@@ -720,8 +620,8 @@ class EditorActivity : Activity() {
 
     private fun applyText(text: String) {
         suppress = true
-        editor.setText(text)
-        editor.setSelection(editor.text.length)
+        editor.setTextContent(text)
+        editor.setSelection(editor.textLength())
         suppress = false
         baseline = text
         editedSinceBaseline = false
@@ -741,7 +641,7 @@ class EditorActivity : Activity() {
 
     private fun undo() {
         handler.removeCallbacks(historyRunnable)
-        val current = editor.text.toString()
+        val current = editor.textString()
         if (current != baseline) {
             redoStack.addLast(current)
             applyText(baseline)
@@ -754,7 +654,7 @@ class EditorActivity : Activity() {
 
     private fun redo() {
         if (redoStack.isEmpty()) return
-        pushUndoSnapshot(editor.text.toString())
+        pushUndoSnapshot(editor.textString())
         applyText(redoStack.removeLast())
     }
 
@@ -771,32 +671,27 @@ class EditorActivity : Activity() {
     // --- Editor prefs, line numbers, highlighting, auto-indent -------------------------
 
     private fun refreshLineNumbers() {
-        if (!settings.lineNumbers) {
-            gutter.visibility = View.GONE
-            return
-        }
-        gutter.visibility = View.VISIBLE
-        lineNumbers.refresh()
+        // The engine draws the gutter itself; this just syncs the
+        // visibility setting and asks for a redraw.
+        editor.showLineNumbers = settings.lineNumbers
+        editor.invalidate()
     }
 
     private fun applyEditorSettings() {
         settings = AppSettings(this)
-        editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, settings.fontSizeSp)
+        editor.setTextSizePx(
+            TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, settings.fontSizeSp,
+                resources.displayMetrics
+            )
+        )
         val face = if (settings.monospace) Typeface.MONOSPACE else Typeface.DEFAULT
-        editor.typeface = face
-        lineNumbers.setTextSizeSp(settings.fontSizeSp)
-        lineNumbers.setTypeface(face)
+        editor.setTypeface(face)
         val spacingPx = settings.lineSpacingSp * resources.displayMetrics.scaledDensity
         editor.setLineSpacing(spacingPx, 1f)
-        editor.setHorizontallyScrolling(!settings.wordWrap)
-        var inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        if (!settings.showSuggestions) {
-            inputType = inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        }
-        if (settings.autoCapitalize) {
-            inputType = inputType or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        }
-        if (editor.inputType != inputType) editor.inputType = inputType
+        editor.wordWrap = settings.wordWrap
+        editor.noSuggestions = !settings.showSuggestions
+        editor.autoCapitalize = settings.autoCapitalize
         accessoryScroll.visibility = if (settings.accessoryView) View.VISIBLE else View.GONE
         applyEditorStyle()
         refreshLineNumbers()
@@ -812,32 +707,33 @@ class EditorActivity : Activity() {
         val style = currentStyle()
         val editorRow = editor.parent as? View
         if (style == null) {
-            editor.setTextColor(palette.textPrimary)
-            editor.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            editor.highlightColor = palette.accent and 0x66FFFFFF
-            lineNumbers.setTextColor(palette.textSecondary)
-            gutter.setBackgroundColor(palette.alt)
+            editor.textColor = palette.textPrimary
+            editor.editorBackground = android.graphics.Color.TRANSPARENT
+            editor.selectionColor = palette.accent and 0x66FFFFFF
+            editor.gutterColor = palette.textSecondary
+            editor.gutterBackground = palette.alt
             editorRow?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         } else {
-            editor.setTextColor(style.foreground)
-            editor.setBackgroundColor(style.background)
-            editor.highlightColor = style.selection
-            lineNumbers.setTextColor(style.gutterText)
-            gutter.setBackgroundColor(style.gutterBackground)
+            editor.textColor = style.foreground
+            editor.editorBackground = style.background
+            editor.selectionColor = style.selection
+            editor.gutterColor = style.gutterText
+            editor.gutterBackground = style.gutterBackground
             editorRow?.setBackgroundColor(style.background)
         }
+        editor.invalidate()
     }
 
     private fun applyHighlighting() {
         val doc = docs.getOrNull(active) ?: return
         try {
             if (!settings.syntaxHighlight) {
-                SyntaxHighlighter.clear(editor.text)
+                editor.highlightRanges = emptyList()
                 return
             }
             val lang = SyntaxHighlighter.resolve(doc.syntax, doc.name)
             if (lang == null) {
-                SyntaxHighlighter.clear(editor.text)
+                editor.highlightRanges = emptyList()
                 return
             }
             val style = currentStyle() ?: EditorStyle(
@@ -850,15 +746,42 @@ class EditorActivity : Activity() {
                 tag = android.graphics.Color.rgb(0, 105, 92),
                 property = android.graphics.Color.rgb(230, 81, 0)
             )
-            SyntaxHighlighter.apply(editor.text, lang, style)
+            // Scan OFF the UI thread (KiA, item 50: a large code file
+            // froze solid when this ran inline). A version counter
+            // drops results computed for text that has since changed.
+            // Only the batched span write happens on the UI thread;
+            // find highlights use BackgroundColorSpans, which the
+            // syntax pass never touches, so they survive untouched.
+            val source = editor.textString()
+            val docRef = doc
+            val version = ++highlightVersion
+            highlightExecutor.execute {
+                val ranges = try {
+                    SyntaxHighlighter.compute(source, lang, style)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                runOnUiThread {
+                    if (version != highlightVersion) return@runOnUiThread
+                    if (docs.getOrNull(active) !== docRef) return@runOnUiThread
+                    if (editor.textLength() != source.length) return@runOnUiThread
+                    editor.highlightRanges = ranges
+                }
+            }
         } catch (e: Exception) {
             // Highlighting is cosmetic; never let it break editing.
         }
     }
 
+    private val highlightExecutor =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "editnote-highlight").apply { isDaemon = true }
+        }
+    private var highlightVersion = 0
+
     /** After Enter, copy the indentation of the line that was just ended. */
     private fun applyAutoIndent(newlineIndex: Int) {
-        val text = editor.text ?: return
+        val text = editor.textString()
         var lineStart = newlineIndex - 1
         while (lineStart >= 0 && text[lineStart] != '\n') lineStart--
         lineStart++
@@ -871,7 +794,7 @@ class EditorActivity : Activity() {
         if (indent.isEmpty()) return
         applyingIndent = true
         try {
-            text.insert(newlineIndex + 1, indent)
+            editor.replaceRange(newlineIndex + 1, newlineIndex + 1, indent.toString())
         } finally {
             applyingIndent = false
         }
@@ -906,19 +829,19 @@ class EditorActivity : Activity() {
         if (readOnly) return
         val start = editor.selectionStart.coerceAtLeast(0)
         val end = editor.selectionEnd.coerceAtLeast(start)
-        editor.text.replace(start, end, value)
+        editor.replaceRange(start, end, value)
         editor.setSelection(start + value.length)
         editor.requestFocus()
     }
 
     private fun moveCursor(delta: Int) {
-        val pos = (editor.selectionStart + delta).coerceIn(0, editor.text.length)
+        val pos = (editor.selectionStart + delta).coerceIn(0, editor.textLength())
         editor.setSelection(pos)
         editor.requestFocus()
     }
 
     private fun moveCursorLine(delta: Int) {
-        val text = editor.text.toString()
+        val text = editor.textString()
         val pos = editor.selectionStart.coerceIn(0, text.length)
         val currentLineStart = text.lastIndexOf('\n', pos - 1) + 1
         val column = pos - currentLineStart
@@ -1062,7 +985,7 @@ class EditorActivity : Activity() {
         showCardMenu(
             anchor,
             listOf(
-                MenuRow("Select all") { editor.selectAll() },
+                MenuRow("Select all") { editor.selectAllText() },
                 MenuRow("Paste") { pasteFromClipboard() },
                 MenuRow("Insert date & time") {
                     insertAtCursor(
@@ -1090,7 +1013,7 @@ class EditorActivity : Activity() {
                 MenuRow("Syntax…") { promptSyntax() },
                 MenuRow("Word wrap", settings.wordWrap) {
                     settings.wordWrap = !settings.wordWrap
-                    editor.setHorizontallyScrolling(!settings.wordWrap)
+                    editor.wordWrap = settings.wordWrap
                 },
                 MenuRow("Read only", readOnly) { setReadOnly(!readOnly) }
             )
@@ -1180,9 +1103,9 @@ class EditorActivity : Activity() {
 
     private fun setReadOnly(on: Boolean) {
         readOnly = on
+        editor.readOnly = on
         editor.isFocusableInTouchMode = !on
         editor.isFocusable = !on
-        editor.isCursorVisible = !on
         if (on) editor.clearFocus()
         if (on) statusView.text = "Read only" else setStatusSaved()
     }
@@ -1228,7 +1151,7 @@ class EditorActivity : Activity() {
     /** Indent/outdent every line touched by the current selection. */
     private fun changeIndent(increase: Boolean) {
         if (readOnly) return
-        val text = editor.text.toString()
+        val text = editor.textString()
         val selStart = editor.selectionStart.coerceIn(0, text.length)
         val selEnd = editor.selectionEnd.coerceIn(selStart, text.length)
         val unit = settings.indentUnit()
@@ -1269,7 +1192,7 @@ class EditorActivity : Activity() {
         val updated = builder.toString()
         if (updated == text) return
         suppress = true
-        editor.setText(updated)
+        editor.setTextContent(updated)
         suppress = false
         docs.getOrNull(active)?.let {
             it.text = updated
@@ -1333,7 +1256,7 @@ class EditorActivity : Activity() {
     }
 
     private fun goToLine(line: Int) {
-        val text = editor.text.toString()
+        val text = editor.textString()
         val lines = text.split("\n")
         val target = line.coerceIn(1, lines.size)
         var offset = 0
@@ -1456,50 +1379,40 @@ class EditorActivity : Activity() {
     // is visible at a glance instead of making the user hunt for a
     // bare selection. BackgroundColorSpans only — the syntax
     // highlighter never touches those.
-    private val findSpans = mutableListOf<Any>()
-
     private fun clearFindHighlights() {
-        val text = editor.text ?: return
-        findSpans.forEach { text.removeSpan(it) }
-        findSpans.clear()
+        editor.findRanges = emptyList()
+        editor.findFgRanges = emptyList()
     }
 
     private fun applyFindHighlights() {
         clearFindHighlights()
         if (!::findBar.isInitialized || findBar.visibility != View.VISIBLE) return
         if (lastQuery.isEmpty()) return
-        val text = editor.text ?: return
         val soft = android.graphics.Color.argb(
             90,
             android.graphics.Color.red(palette.accent),
             android.graphics.Color.green(palette.accent),
             android.graphics.Color.blue(palette.accent)
         )
+        val bg = mutableListOf<Pair<IntRange, Int>>()
+        val fg = mutableListOf<Pair<IntRange, Int>>()
         for (idx in matchOffsets().take(500)) {
-            val current = idx == lastFindIndex
-            val bg = android.text.style.BackgroundColorSpan(
-                if (current) palette.accent else soft
-            )
-            text.setSpan(
-                bg, idx, idx + lastQuery.length,
-                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            findSpans.add(bg)
-            if (current) {
-                val fg = android.text.style.ForegroundColorSpan(palette.onAccent)
-                text.setSpan(
-                    fg, idx, idx + lastQuery.length,
-                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-                findSpans.add(fg)
+            val range = idx until idx + lastQuery.length
+            if (idx == lastFindIndex) {
+                bg.add(range to palette.accent)
+                fg.add(range to palette.onAccent)
+            } else {
+                bg.add(range to soft)
             }
         }
+        editor.findRanges = bg
+        editor.findFgRanges = fg
     }
 
     /** All match start offsets for the current query (case-insensitive). */
     private fun matchOffsets(): List<Int> {
         if (lastQuery.isEmpty()) return emptyList()
-        val text = editor.text.toString()
+        val text = editor.textString()
         val out = mutableListOf<Int>()
         var from = 0
         while (true) {
@@ -1541,18 +1454,12 @@ class EditorActivity : Activity() {
      *  document never jumped to the match. */
     private fun revealMatch(idx: Int) {
         editor.setSelection(idx, idx + lastQuery.length)
-        editor.post {
-            val layout = editor.layout ?: return@post
-            val line = layout.getLineForOffset(idx)
-            val y = layout.getLineTop(line)
-            val target = (y - editor.height / 3).coerceAtLeast(0)
-            editor.scrollTo(0, target)
-        }
+        editor.scrollToOffset(idx)
     }
 
     private fun findNext() {
         if (lastQuery.isEmpty()) return
-        val text = editor.text.toString()
+        val text = editor.textString()
         var idx = text.indexOf(lastQuery, startIndex = lastFindIndex + 1, ignoreCase = true)
         if (idx < 0) idx = text.indexOf(lastQuery, startIndex = 0, ignoreCase = true)
         if (idx < 0) {
@@ -1569,7 +1476,7 @@ class EditorActivity : Activity() {
 
     private fun findPrev() {
         if (lastQuery.isEmpty()) return
-        val text = editor.text.toString()
+        val text = editor.textString()
         var idx = if (lastFindIndex > 0) {
             text.lastIndexOf(lastQuery, startIndex = lastFindIndex - 1, ignoreCase = true)
         } else -1
@@ -1617,7 +1524,7 @@ class EditorActivity : Activity() {
     }
 
     private fun replaceNext(find: String, replacement: String) {
-        val text = editor.text.toString()
+        val text = editor.textString()
         val start = editor.selectionEnd.coerceAtLeast(0)
         var idx = text.indexOf(find, startIndex = start, ignoreCase = true)
         if (idx < 0) idx = text.indexOf(find, startIndex = 0, ignoreCase = true)
@@ -1625,18 +1532,14 @@ class EditorActivity : Activity() {
             Toast.makeText(this, "Not found: $find", Toast.LENGTH_SHORT).show()
             return
         }
-        editor.text.replace(idx, idx + find.length, replacement)
+        editor.replaceRange(idx, idx + find.length, replacement)
         editor.setSelection(idx, idx + replacement.length)
         lastFindIndex = idx
-        editor.post {
-            val layout = editor.layout ?: return@post
-            val y = layout.getLineTop(layout.getLineForOffset(idx))
-            editor.scrollTo(0, (y - editor.height / 3).coerceAtLeast(0))
-        }
+        editor.scrollToOffset(idx)
     }
 
     private fun replaceAll(find: String, replacement: String) {
-        val current = editor.text.toString()
+        val current = editor.textString()
         val updated = current.replace(find, replacement, ignoreCase = true)
         if (updated == current) {
             Toast.makeText(this, "Not found: $find", Toast.LENGTH_SHORT).show()
@@ -1644,7 +1547,7 @@ class EditorActivity : Activity() {
         }
         val count = Regex(Regex.escape(find), RegexOption.IGNORE_CASE).findAll(current).count()
         suppress = true
-        editor.setText(updated)
+        editor.setTextContent(updated)
         suppress = false
         docs.getOrNull(active)?.let {
             it.text = updated
@@ -1663,7 +1566,7 @@ class EditorActivity : Activity() {
     private fun showStats() {
         val doc = docs.getOrNull(active) ?: return
         stashActive()
-        val text = editor.text.toString()
+        val text = editor.textString()
         val words = text.split(Regex("\\s+")).count { it.isNotBlank() }
         val lines = if (text.isEmpty()) 0 else text.count { it == '\n' } + 1
         val syntaxLabel = when (doc.syntax) {
@@ -1686,7 +1589,7 @@ class EditorActivity : Activity() {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, doc.name)
-            putExtra(Intent.EXTRA_TEXT, editor.text.toString())
+            putExtra(Intent.EXTRA_TEXT, editor.textString())
         }
         startActivity(Intent.createChooser(intent, "Share"))
     }
