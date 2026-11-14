@@ -18,7 +18,7 @@ object SyntaxHighlighter {
     const val AUTO = "auto"
     const val NONE = "none"
 
-    private const val MAX_LENGTH = 300_000
+    private const val MAX_LENGTH = 200_000
 
     class Lang(
         val id: String,

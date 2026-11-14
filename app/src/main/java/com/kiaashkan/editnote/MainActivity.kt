@@ -2,7 +2,6 @@ package com.kiaashkan.editnote
 
 import android.app.Activity
 import android.app.Dialog
-import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -72,9 +71,9 @@ class MainActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
 
-        val fab = findViewById<Button>(R.id.btnFab)
+        val fab = findViewById<ImageButton>(R.id.btnFab)
         fab.background = palette.ovalDrawable(palette.accent)
-        fab.setTextColor(palette.onAccent)
+        fab.setColorFilter(palette.onAccent)
         fab.setOnClickListener { toggleSpeedDial() }
         setupSpeedDial()
 
@@ -131,6 +130,8 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
+        findViewById<TextView>(R.id.sectionLabel).text =
+            if (bookmarksOnly) "BOOKMARKS" else "RECENT FILES"
         val query = searchBox.text?.toString()?.trim()?.lowercase() ?: ""
         val entries = recents.list().filter {
             (query.isEmpty() || it.name.lowercase().contains(query)) &&
@@ -274,7 +275,7 @@ class MainActivity : Activity() {
         dial.alpha = 0f
         dial.translationY = 14f * resources.displayMetrics.density
         dial.animate().alpha(1f).translationY(0f).setDuration(160).start()
-        findViewById<Button>(R.id.btnFab).animate().rotation(45f).setDuration(160).start()
+        findViewById<ImageButton>(R.id.btnFab).animate().rotation(45f).setDuration(160).start()
     }
 
     private fun closeSpeedDial() {
@@ -288,7 +289,7 @@ class MainActivity : Activity() {
                 findViewById<View>(R.id.speedScrim).visibility = View.GONE
             }
             .start()
-        findViewById<Button>(R.id.btnFab).animate().rotation(0f).setDuration(160).start()
+        findViewById<ImageButton>(R.id.btnFab).animate().rotation(0f).setDuration(160).start()
     }
 
     @Deprecated("Deprecated in Java")
@@ -388,29 +389,26 @@ class MainActivity : Activity() {
     }
 
     private fun showEntryActions(entry: RecentFiles.Entry) {
-        val items = arrayOf(
+        val items = listOf(
             "Open",
             if (entry.bookmarked) "Remove bookmark" else "Bookmark",
             "Remove from list"
         )
-        AlertDialog.Builder(this)
-            .setTitle(entry.name)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> startActivity(
-                        EditorActivity.externalIntent(this, Uri.parse(entry.uri), entry.name)
-                    )
-                    1 -> {
-                        recents.setBookmarked(entry.uri, !entry.bookmarked)
-                        refresh()
-                    }
-                    2 -> {
-                        recents.remove(entry.uri)
-                        refresh()
-                    }
+        CardDialogs.picker(this, palette, entry.name, items, current = -1) { which ->
+            when (which) {
+                0 -> startActivity(
+                    EditorActivity.externalIntent(this, Uri.parse(entry.uri), entry.name)
+                )
+                1 -> {
+                    recents.setBookmarked(entry.uri, !entry.bookmarked)
+                    refresh()
+                }
+                2 -> {
+                    recents.remove(entry.uri)
+                    refresh()
                 }
             }
-            .show()
+        }
     }
 
     private fun pickExternalFile() {

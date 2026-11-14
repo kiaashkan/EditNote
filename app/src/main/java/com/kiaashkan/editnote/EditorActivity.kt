@@ -1,7 +1,6 @@
 package com.kiaashkan.editnote
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -62,7 +61,9 @@ class EditorActivity : Activity() {
         /** This file's encoding: used for every read and write of it. */
         var encoding: String = "UTF-8",
         /** Syntax choice: SyntaxHighlighter.AUTO, NONE, or a language id. */
-        var syntax: String = SyntaxHighlighter.AUTO
+        var syntax: String = SyntaxHighlighter.AUTO,
+        /** Set once the "large file: wrap off" note has been shown. */
+        var largeWrapToastShown: Boolean = false
     )
 
     private lateinit var settings: AppSettings
@@ -118,9 +119,13 @@ class EditorActivity : Activity() {
         override fun run() {
             if (editorTouching) return
             val idle = SystemClock.uptimeMillis() - lastScrollChangeAt
-            if (idle < 150 && glideSettleTries < 8) {
-                glideSettleTries++
-                handler.postDelayed(this, 100)
+            if (idle < 150) {
+                if (glideSettleTries < 12) {
+                    glideSettleTries++
+                    handler.postDelayed(this, 100)
+                }
+                // Still moving after ~1.4 s: the native fling is long
+                // enough on its own — do not stack a second glide.
                 return
             }
             startExtensionGlide()
@@ -146,7 +151,7 @@ class EditorActivity : Activity() {
         val max = editorMaxScroll()
         if (max <= 0) return
         val startY = editor.scrollY
-        val target = (startY + (v * 1.2f).toInt()).coerceIn(0, max)
+        val target = (startY + (v * 1.6f).toInt()).coerceIn(0, max)
         if (kotlin.math.abs(target - startY) < editor.height / 2) return
         glideAnimator = ValueAnimator.ofInt(startY, target).apply {
             duration = 750
@@ -220,8 +225,9 @@ class EditorActivity : Activity() {
         docs.addAll(resolveInitialDocs())
         if (docs.isEmpty()) docs.add(newDraftDoc("Untitled"))
         active = 0
-        loadDocIntoEditor(docs[0])
         applyEditorSettings()
+        loadDocIntoEditor(docs[0])
+        editor.post { refreshLineNumbers() }
         buildAccessoryBar()
         renderTabs()
 
@@ -449,6 +455,23 @@ class EditorActivity : Activity() {
             doc.dirty -> statusView.text = "Unsaved changes"
             else -> setStatusSaved()
         }
+        // Large-file mode (KiA, item 46; how real editors stay
+        // smooth): past ~200K characters, word wrap is the single
+        // most expensive layout mode a stock EditText has — every
+        // line must be broken and measured. Big files therefore open
+        // unwrapped (horizontal scroll) even when the setting is on;
+        // the Options menu can still force wrap back on for the
+        // session. Small files are untouched.
+        val large = doc.text.length > LARGE_FILE_CHARS
+        editor.setHorizontallyScrolling(!settings.wordWrap || large)
+        if (large && settings.wordWrap && !doc.largeWrapToastShown) {
+            doc.largeWrapToastShown = true
+            Toast.makeText(
+                this,
+                "Large file: word wrap off for smooth scrolling",
+                Toast.LENGTH_LONG
+            ).show()
+        }
         refreshLineNumbers()
         applyHighlighting()
     }
@@ -481,14 +504,17 @@ class EditorActivity : Activity() {
         if (index == active) stashActive()
         val doc = docs[index]
         if (doc.needsDestination && doc.text.isNotBlank()) {
-            AlertDialog.Builder(this)
-                .setTitle("Save “${doc.name}”?")
-                .setMessage("This new file has not been saved anywhere yet.")
-                .setPositiveButton("Save…") { _, _ ->
+            CardDialogs.confirm(
+                this, palette,
+                "Save “${doc.name}”?",
+                "This new file has not been saved anywhere yet.",
+                "Save…",
+                onPositive = {
                     pendingCloseIndex = index
                     promptSaveDestination(doc)
-                }
-                .setNegativeButton("Discard") { _, _ ->
+                },
+                negativeLabel = "Discard",
+                onNegative = {
                     doc.needsDestination = false
                     doc.text = ""
                     doc.draftFile?.delete()
@@ -496,8 +522,7 @@ class EditorActivity : Activity() {
                     doc.dirty = false
                     closeTab(index)
                 }
-                .setNeutralButton("Cancel", null)
-                .show()
+            )
             return
         }
         if (doc.dirty) saveDoc(doc, silent = true)
@@ -622,32 +647,35 @@ class EditorActivity : Activity() {
      *  user chooses the folder/location. Nothing is stored inside EditNote. */
     private fun promptSaveDestination(doc: Doc) {
         stashActive()
-        val input = EditText(this).apply {
-            setText(doc.name)
-            hint = "File name"
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Save new file")
-            .setMessage("Name the file, then choose where to save it.")
-            .setView(input)
-            .setPositiveButton("Choose location…") { _, _ ->
-                val typed = input.text.toString().trim()
-                if (typed.isNotEmpty()) doc.name = sanitizeFileName(typed)
-                pendingDestinationDoc = doc
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TITLE, doc.name)
+        val input = CardDialogs.inputField(this, palette, "File name", doc.name)
+        CardDialogs.show(
+            this, palette,
+            "Save new file",
+            "Name the file, then choose where to save it.",
+            content = { it.addView(input) },
+            focusView = input,
+            buttons = listOf(
+                CardDialogs.ButtonSpec("Cancel") { d ->
+                    d.dismiss()
+                    pendingDestinationDoc = null
+                    pendingCloseIndex = -1
+                    pendingFinish = false
+                },
+                CardDialogs.ButtonSpec("Choose location…", primary = true) { d ->
+                    d.dismiss()
+                    val typed = input.text.toString().trim()
+                    if (typed.isNotEmpty()) doc.name = sanitizeFileName(typed)
+                    pendingDestinationDoc = doc
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TITLE, doc.name)
+                    }
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(intent, REQ_SAVE_DEST)
                 }
-                @Suppress("DEPRECATION")
-                startActivityForResult(intent, REQ_SAVE_DEST)
-            }
-            .setNegativeButton("Cancel") { _, _ ->
-                pendingDestinationDoc = null
-                pendingCloseIndex = -1
-                pendingFinish = false
-            }
-            .show()
+            )
+        )
     }
 
     private var pendingDestinationDoc: Doc? = null
@@ -658,14 +686,17 @@ class EditorActivity : Activity() {
         stashActive()
         val pending = docs.firstOrNull { it.needsDestination && it.text.isNotBlank() }
         if (pending != null) {
-            AlertDialog.Builder(this)
-                .setTitle("Save “${pending.name}”?")
-                .setMessage("This new file has not been saved anywhere yet.")
-                .setPositiveButton("Save…") { _, _ ->
+            CardDialogs.confirm(
+                this, palette,
+                "Save “${pending.name}”?",
+                "This new file has not been saved anywhere yet.",
+                "Save…",
+                onPositive = {
                     pendingFinish = true
                     promptSaveDestination(pending)
-                }
-                .setNegativeButton("Discard") { _, _ ->
+                },
+                negativeLabel = "Discard",
+                onNegative = {
                     pending.needsDestination = false
                     pending.text = ""
                     pending.draftFile?.delete()
@@ -673,8 +704,7 @@ class EditorActivity : Activity() {
                     pending.dirty = false
                     finishWithSave()
                 }
-                .setNeutralButton("Cancel", null)
-                .show()
+            )
             return
         }
         docs.filter { it.dirty }.forEach { saveDoc(it, silent = true) }
@@ -1072,17 +1102,12 @@ class EditorActivity : Activity() {
         val names = EditorStyles.menuNames().toTypedArray()
         val ids = listOf(EditorStyles.DEFAULT_ID) + EditorStyles.ALL.map { it.id }
         val current = ids.indexOf(AppSettings(this).visualStyle).coerceAtLeast(0)
-        AlertDialog.Builder(this)
-            .setTitle("Visual Styles")
-            .setSingleChoiceItems(names, current) { dialog, which ->
-                AppSettings(this).visualStyle = ids[which]
-                settings = AppSettings(this)
-                applyEditorStyle()
-                applyHighlighting()
-                dialog.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        CardDialogs.picker(this, palette, "Visual Styles", names.toList(), current) { which ->
+            AppSettings(this).visualStyle = ids[which]
+            settings = AppSettings(this)
+            applyEditorStyle()
+            applyHighlighting()
+        }
     }
 
     /** Encoding picker for the active file. With a saved file open, the
@@ -1099,14 +1124,9 @@ class EditorActivity : Activity() {
         val current = names.indexOfFirst {
             it.equals(docEncDisplay, ignoreCase = true)
         }.coerceAtLeast(0)
-        AlertDialog.Builder(this)
-            .setTitle("Encoding")
-            .setSingleChoiceItems(names, current) { dialog, which ->
-                dialog.dismiss()
-                applyEncodingChoice(doc, names[which])
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        CardDialogs.picker(this, palette, "Encoding", names.toList(), current) { which ->
+            applyEncodingChoice(doc, names[which])
+        }
     }
 
     private fun applyEncodingChoice(doc: Doc, chosen: String) {
@@ -1131,12 +1151,13 @@ class EditorActivity : Activity() {
             }
         }
         if (doc.dirty) {
-            AlertDialog.Builder(this)
-                .setTitle("Re-read with $chosen?")
-                .setMessage("Changing the encoding re-reads the file from disk. Unsaved changes in this tab will be lost.")
-                .setPositiveButton("Re-read") { _, _ -> reread() }
-                .setNegativeButton("Cancel", null)
-                .show()
+            CardDialogs.confirm(
+                this, palette,
+                "Re-read with $chosen?",
+                "Changing the encoding re-reads the file from disk. Unsaved changes in this tab will be lost.",
+                "Re-read",
+                onPositive = { reread() }
+            )
         } else reread()
     }
 
@@ -1151,15 +1172,10 @@ class EditorActivity : Activity() {
             ids.add(it.id)
         }
         val current = ids.indexOf(doc.syntax).coerceAtLeast(0)
-        AlertDialog.Builder(this)
-            .setTitle("Syntax")
-            .setSingleChoiceItems(labels.toTypedArray(), current) { dialog, which ->
-                doc.syntax = ids[which]
-                applyHighlighting()
-                dialog.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        CardDialogs.picker(this, palette, "Syntax", labels, current) { which ->
+            doc.syntax = ids[which]
+            applyHighlighting()
+        }
     }
 
     private fun setReadOnly(on: Boolean) {
@@ -1186,12 +1202,13 @@ class EditorActivity : Activity() {
             if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
         }
         if (doc.dirty) {
-            AlertDialog.Builder(this)
-                .setTitle("Reload file?")
-                .setMessage("Unsaved changes in this tab will be lost.")
-                .setPositiveButton("Reload") { _, _ -> doReload() }
-                .setNegativeButton("Cancel", null)
-                .show()
+            CardDialogs.confirm(
+                this, palette,
+                "Reload file?",
+                "Unsaved changes in this tab will be lost.",
+                "Reload",
+                onPositive = { doReload() }
+            )
         } else doReload()
     }
 
@@ -1295,19 +1312,24 @@ class EditorActivity : Activity() {
     }
 
     private fun promptGoToLine() {
-        val input = EditText(this).apply {
-            hint = "Line number"
+        val input = CardDialogs.inputField(
+            this, palette, "Line number",
             inputType = InputType.TYPE_CLASS_NUMBER
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Go to line")
-            .setView(input)
-            .setPositiveButton("Go") { _, _ ->
-                val line = input.text.toString().toIntOrNull() ?: return@setPositiveButton
-                goToLine(line)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        )
+        CardDialogs.show(
+            this, palette, "Go to line",
+            content = { it.addView(input) },
+            focusView = input,
+            buttons = listOf(
+                CardDialogs.ButtonSpec("Cancel") { d -> d.dismiss() },
+                CardDialogs.ButtonSpec("Go", primary = true) { d ->
+                    d.dismiss()
+                    val line = input.text.toString().toIntOrNull()
+                        ?: return@ButtonSpec
+                    goToLine(line)
+                }
+            )
+        )
     }
 
     private fun goToLine(line: Int) {
@@ -1565,34 +1587,33 @@ class EditorActivity : Activity() {
     }
 
     private fun promptReplace() {
-        val findInput = EditText(this).apply {
-            setText(lastQuery)
-            hint = "Find"
-        }
-        val replaceInput = EditText(this).apply { hint = "Replace with" }
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 16, 48, 8)
-            addView(findInput)
-            addView(replaceInput)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Find & Replace")
-            .setView(container)
-            .setPositiveButton("Replace") { _, _ ->
-                val find = findInput.text.toString()
-                if (find.isEmpty()) return@setPositiveButton
-                lastQuery = find
-                replaceNext(find, replaceInput.text.toString())
-            }
-            .setNeutralButton("Replace all") { _, _ ->
-                val find = findInput.text.toString()
-                if (find.isEmpty()) return@setNeutralButton
-                lastQuery = find
-                replaceAll(find, replaceInput.text.toString())
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        val findInput = CardDialogs.inputField(this, palette, "Find", lastQuery)
+        val replaceInput = CardDialogs.inputField(this, palette, "Replace with")
+        CardDialogs.show(
+            this, palette, "Find & Replace",
+            content = { body ->
+                body.addView(findInput)
+                body.addView(replaceInput)
+            },
+            focusView = findInput,
+            buttons = listOf(
+                CardDialogs.ButtonSpec("Cancel") { d -> d.dismiss() },
+                CardDialogs.ButtonSpec("Replace all") { d ->
+                    val find = findInput.text.toString()
+                    if (find.isEmpty()) return@ButtonSpec
+                    d.dismiss()
+                    lastQuery = find
+                    replaceAll(find, replaceInput.text.toString())
+                },
+                CardDialogs.ButtonSpec("Replace", primary = true) { d ->
+                    val find = findInput.text.toString()
+                    if (find.isEmpty()) return@ButtonSpec
+                    d.dismiss()
+                    lastQuery = find
+                    replaceNext(find, replaceInput.text.toString())
+                }
+            )
+        )
     }
 
     private fun replaceNext(find: String, replacement: String) {
@@ -1653,14 +1674,11 @@ class EditorActivity : Activity() {
             else -> SyntaxHighlighter.languageById(doc.syntax)?.display ?: doc.syntax
         }
         val styleLabel = currentStyle()?.name ?: "Default"
-        AlertDialog.Builder(this)
-            .setTitle("Statistics")
-            .setMessage(
-                "Characters: ${text.length}\nWords: $words\nLines: $lines\n" +
-                    "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel"
-            )
-            .setPositiveButton("OK", null)
-            .show()
+        CardDialogs.info(
+            this, palette, "Statistics",
+            "Characters: ${text.length}\nWords: $words\nLines: $lines\n" +
+                "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel"
+        )
     }
 
     private fun shareText() {
@@ -1675,6 +1693,7 @@ class EditorActivity : Activity() {
 
     companion object {
         private const val HISTORY_DELAY_MS = 600L
+        private const val LARGE_FILE_CHARS = 200_000
         private const val HIGHLIGHT_DELAY_MS = 500L
         private const val REQ_OPEN = 2002
         private const val REQ_CREATE = 2001

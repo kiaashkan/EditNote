@@ -78,6 +78,7 @@
         android:textSize="15sp" />
 
     <TextView
+        android:id="@+id/sectionLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
@@ -181,14 +182,14 @@
         </LinearLayout>
     </LinearLayout>
 
-    <Button
+    <ImageButton
         android:id="@+id/btnFab"
         android:layout_width="58dp"
         android:layout_height="58dp"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="20dp"
         android:layout_marginBottom="48dp"
-        android:text="+"
-        android:textColor="#FFFFFF"
-        android:textSize="30sp" />
+        android:contentDescription="New or open file"
+        android:padding="15dp"
+        android:src="@drawable/ic_add" />
 </FrameLayout>
