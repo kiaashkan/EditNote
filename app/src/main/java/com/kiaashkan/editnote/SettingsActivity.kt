@@ -278,7 +278,8 @@ class SettingsActivity : Activity() {
             }
         }
 
-        bindCheck(R.id.checkTypeFilter, settings.fileTypeFilter) { settings.fileTypeFilter = it }
+        // Item 73: the text-file-filter switch is gone (its row was
+        // removed from the layout) — the open picker accepts all files.
     }
 
     /** Single-choice list for the value rows (KiA, items 27+32: a list,

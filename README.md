@@ -37,6 +37,9 @@ important hides inside the app.
   (GitHub, Monokai, Dracula, Solarized, …)
 - A custom-built editor engine that opens very large files — 100,000+
   lines — smoothly, with progressive syntax highlighting
+- Opens **any** file as text: the file picker has no format filter, so
+  .js, .json, .xml, .md, extension-less files and everything else open
+  without being greyed out
 - Per-file encoding: UTF-8, UTF-16, UTF-32, windows-1256, windows-1252,
   windows-1251, ISO-8859-1, US-ASCII, UTF-16BE, UTF-16LE, with BOM detection
 - Files opened read-only from other apps (for example Google Drive) are
@@ -67,7 +70,7 @@ important hides inside the app.
 - Autosave with optional confirmation message and interval (30 s – 5 min)
 - Default encoding (UTF-8, UTF-16, UTF-32, Windows-1256, Windows-1252,
   Windows-1251, ISO-8859-1, US-ASCII, UTF-16BE, UTF-16LE)
-- Line break style (LF / CRLF), text-file filter for the open picker
+- Line break style (LF / CRLF)
 
 ## Privacy
 

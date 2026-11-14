@@ -1399,7 +1399,12 @@ class FastEditorView @JvmOverloads constructor(
         if (pos == 0) return
         val prev = buffer[pos - 1]
         val next = charAt(pos)
-        if (next != null && closers[prev] == next) {
+        // Pair-aware deletion is a CODE behaviour (audit #3): the
+        // IME path already gated on codeBehaviors, but the
+        // hardware-key path calls this directly — in a plain-text
+        // file, backspace between an adjacent pair (e.g. []) must
+        // delete one character, not both.
+        if (codeBehaviors && next != null && closers[prev] == next) {
             replaceRange(pos - 1, pos + 1, "")
         } else {
             replaceRange(pos - 1, pos, "")

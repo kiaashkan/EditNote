@@ -676,31 +676,10 @@
                     android:textSize="20sp" />
             </LinearLayout>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#33888888" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Show only text files when opening"
-                    android:textSize="16sp" />
-
-                <Switch
-                    android:id="@+id/checkTypeFilter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </LinearLayout>
+            <!-- The "Show only text files when opening" switch was
+                 removed in item 73 (KiA): its text/* picker filter
+                 blocked real text files (.js, .json, …), so the
+                 picker now accepts every file as text. -->
 
         </LinearLayout>
 
@@ -743,7 +722,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="EditNote 1.4.1"
+                        android:text="EditNote 1.4.2"
                         android:textSize="17sp"
                         android:textStyle="bold" />
 

@@ -298,7 +298,21 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (speedDialOpen) closeSpeedDial() else super.onBackPressed()
+        // Item 75 (KiA): leaving from the home screen closes the
+        // app completely — the task leaves Recents too, instead of
+        // the app idling underneath until a Force Stop.
+        if (speedDialOpen) closeSpeedDial() else finishAndRemoveTask()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Item 75: on a genuine exit (Back from the root screen),
+        // end the process — nothing of EditNote stays resident.
+        // isFinishing is false for recreate() (theme/accent change)
+        // and for system-driven destroys, so those never kill.
+        if (isFinishing) {
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
     }
 
     /** Modern card dialog for the new-file name (KiA, item 22: the stock
@@ -418,7 +432,12 @@ class MainActivity : Activity() {
     private fun pickExternalFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (AppSettings(this@MainActivity).fileTypeFilter) "text/*" else "*/*"
+            // KiA (item 73): NO type filter — every file may be
+            // opened as text. The old "text/*" filter silently
+            // blocked real text files (.js, .json, .xml, extension-
+            // less…) whenever the storage provider reported them
+            // as application/* or octet-stream instead of text/*.
+            type = "*/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }

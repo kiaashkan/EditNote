@@ -333,8 +333,25 @@ class EditorActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        // Item 75 (KiA: low battery, nothing runs underneath):
+        // settle the pending undo snapshot now, save, then cancel
+        // EVERY pending callback — no autosave, history or
+        // highlight timer may fire while the app is in the
+        // background. The next edit after onResume re-schedules
+        // them, and onPause already saved everything dirty.
+        if (editedSinceBaseline) historyRunnable.run()
         stashActive()
         docs.filter { it.dirty }.forEach { saveDoc(it, silent = true) }
+        handler.removeCallbacksAndMessages(null)
+    }
+
+    override fun onDestroy() {
+        // Item 75: the background executors die with the editor —
+        // no thread of EditNote outlives its window.
+        handler.removeCallbacksAndMessages(null)
+        highlightExecutor.shutdownNow()
+        ioExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     @Deprecated("Back may undo (setting) or leave after saving.")
@@ -666,8 +683,16 @@ class EditorActivity : Activity() {
                     (7 * density).toInt()
                 )
                 val nameView = TextView(this@EditorActivity).apply {
-                    text = (if (doc.dirty) "• " else "") +
-                        doc.name.removeSuffix(".txt")
+                    // KiA (item 74): with several files open, a tab
+                    // shows only the first 7 characters of the name
+                    // plus "…" — full names ate the strip and pushed
+                    // the other tabs away. (The strip is hidden for a
+                    // single file, where the header names it anyway.)
+                    val baseName = doc.name.removeSuffix(".txt")
+                    val label = if (docs.size > 1 && baseName.length > 7) {
+                        baseName.take(7) + "…"
+                    } else baseName
+                    text = (if (doc.dirty) "• " else "") + label
                     textSize = 13.5f
                     if (isActive) {
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -676,8 +701,6 @@ class EditorActivity : Activity() {
                         if (isActive) fg else palette.textSecondary
                     )
                     isSingleLine = true
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    maxWidth = (170 * density).toInt()
                 }
                 addView(nameView)
                 if (isActive) {
@@ -710,6 +733,12 @@ class EditorActivity : Activity() {
     // --- Saving --------------------------------------------------------------------
 
     private fun saveDoc(doc: Doc, silent: Boolean) {
+        // Audit #3: a document still loading in the background has
+        // only placeholder text — writing it would overwrite the
+        // real file with nothing (the item-61 data-loss shape).
+        // Nothing about a loading doc is saveable; its content
+        // lands via startLoad and is clean when it arrives.
+        if (doc.pendingLoad) return
         if (doc === docs.getOrNull(active)) stashActive()
         // Item 65 (behaviour set by KiA): a read-only-source
         // document can never be written back, and the user must
@@ -1130,7 +1159,29 @@ class EditorActivity : Activity() {
         val editStart = lastEditStart
         lastEditStart = Int.MAX_VALUE
         if (editStart != Int.MAX_VALUE) {
-            val from = chunks.lastOrNull { it.first <= editStart }?.first ?: 0
+            var from = chunks.lastOrNull { it.first <= editStart }?.first ?: 0
+            // Audit #3: a range from an earlier plan can CROSS
+            // this clear point (a block comment or string spanning
+            // a chunk boundary). Clearing from here deletes it —
+            // and its home chunk, marked done below, would never
+            // be recomputed, so that colour was lost until the
+            // next full re-plan. Ranges are sorted and
+            // non-overlapping, so at most one range can cross:
+            // binary-search the first range starting at/after the
+            // clear point and check its predecessor; pull the
+            // clear point back to the crossing range's start so
+            // its chunk is redone as well.
+            val ranges = editor.highlightRanges
+            var lo = 0
+            var hi = ranges.size
+            while (lo < hi) {
+                val mid = (lo + hi) / 2
+                if (ranges[mid].from < from) lo = mid + 1 else hi = mid
+            }
+            val prev = ranges.getOrNull(lo - 1)
+            if (prev != null && prev.from < from && prev.to > from) {
+                from = prev.from
+            }
             editor.applyHighlightChunk(from, source.length, emptyList())
             // The chunks before the edit kept their ranges; mark
             // them done so the scroll window never recomputes them.
@@ -1312,7 +1363,12 @@ class EditorActivity : Activity() {
     }
 
     private fun insertAtCursor(value: String) {
-        if (readOnly) return
+        // The ENGINE's flag, not the activity's (audit #3): it
+        // also covers the background-load window, during which the
+        // editor shows placeholder text that must never be edited
+        // (an edit would mark the doc dirty and a later save could
+        // write the placeholder over the real file).
+        if (editor.readOnly) return
         val start = editor.selectionStart.coerceAtLeast(0)
         val end = editor.selectionEnd.coerceAtLeast(start)
         editor.replaceRange(start, end, value)
@@ -1549,6 +1605,12 @@ class EditorActivity : Activity() {
         }
         val reread = {
             // Background, like every other read (item 64).
+            // Audit #3: snapshot the text at flight start — if the
+            // user edits while the read is in flight, the delivery
+            // must not silently overwrite those edits (the dirty
+            // confirm above only covers edits made BEFORE).
+            stashActiveIf(doc)
+            val startText = doc.text
             loadProgress.visibility = View.VISIBLE
             ioExecutor.execute {
                 var error: String? = null
@@ -1566,9 +1628,17 @@ class EditorActivity : Activity() {
                         } else {
                             View.GONE
                         }
+                    stashActiveIf(doc)
                     if (text == null) {
                         Toast.makeText(
                             this, "Could not re-read file: $error",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else if (doc.text != startText) {
+                        Toast.makeText(
+                            this,
+                            "Encoding change skipped — the document " +
+                                "changed while it was being re-read",
                             Toast.LENGTH_LONG
                         ).show()
                     } else {
@@ -1621,7 +1691,11 @@ class EditorActivity : Activity() {
 
     private fun setReadOnly(on: Boolean) {
         readOnly = on
-        editor.readOnly = on
+        // Compose with the load state (audit #3): turning Read
+        // only OFF while a document is still loading must not
+        // unblock editing of its placeholder text.
+        editor.readOnly = on ||
+            (docs.getOrNull(active)?.pendingLoad == true)
         editor.isFocusableInTouchMode = !on
         editor.isFocusable = !on
         if (on) editor.clearFocus()
@@ -1640,6 +1714,11 @@ class EditorActivity : Activity() {
             // lost wiped the tab's text and marked it clean. Read
             // with a throwing call and abort on failure instead.
             // Item 64: the read itself now runs in the background.
+            // Audit #3: same in-flight guard as the encoding
+            // re-read — edits typed while the read runs are never
+            // silently overwritten by the delivery.
+            stashActiveIf(doc)
+            val startText = doc.text
             loadProgress.visibility = View.VISIBLE
             ioExecutor.execute {
                 var error: String? = null
@@ -1656,9 +1735,17 @@ class EditorActivity : Activity() {
                         } else {
                             View.GONE
                         }
+                    stashActiveIf(doc)
                     if (result == null) {
                         Toast.makeText(
                             this, "Could not reload file: $error",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else if (doc.text != startText) {
+                        Toast.makeText(
+                            this,
+                            "Reload skipped — the document changed " +
+                                "while it was being re-read",
                             Toast.LENGTH_LONG
                         ).show()
                     } else {
@@ -1700,24 +1787,31 @@ class EditorActivity : Activity() {
 
     /** Indent/outdent every line touched by the current selection. */
     private fun changeIndent(increase: Boolean) {
-        if (readOnly) return
+        if (editor.readOnly) return
         val text = editor.textString()
         val selStart = editor.selectionStart.coerceIn(0, text.length)
         val selEnd = editor.selectionEnd.coerceIn(selStart, text.length)
         val unit = settings.indentUnit()
 
-        // Absolute start offset of every line touched by the selection.
+        // Absolute start offset of every line touched by the
+        // selection. A selection ending exactly at a line start
+        // does NOT touch that last line (audit #3): the old loop
+        // added it anyway, so indenting a selection that ended at
+        // column 0 also indented the untouched line below. The
+        // last touched line is the one holding selEnd - 1.
         val firstLineStart = text.lastIndexOf('\n', selStart - 1) + 1
+        val lastTouchedStart = if (selEnd > selStart) {
+            text.lastIndexOf('\n', selEnd - 2) + 1
+        } else firstLineStart
         val lineStarts = mutableListOf<Int>()
         var pos = firstLineStart
-        while (pos <= selEnd) {
+        while (true) {
             lineStarts.add(pos)
+            if (pos >= lastTouchedStart) break
             val next = text.indexOf('\n', pos)
             if (next < 0) break
             pos = next + 1
-            if (pos > selEnd && selEnd > firstLineStart && text.getOrNull(selEnd - 1) == '\n') break
         }
-        if (lineStarts.isEmpty()) lineStarts.add(firstLineStart)
 
         // Transform only the touched lines' span and push it
         // through the engine's edit funnel (audit fix — this used
@@ -1768,7 +1862,8 @@ class EditorActivity : Activity() {
     private fun pickExternalFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (settings.fileTypeFilter) "text/*" else "*/*"
+            // KiA (item 73): no type filter — see MainActivity.
+            type = "*/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
@@ -2084,6 +2179,7 @@ class EditorActivity : Activity() {
     }
 
     private fun replaceNext(find: String, replacement: String) {
+        if (editor.readOnly) return
         val text = editor.textString()
         val start = editor.selectionEnd.coerceAtLeast(0)
         var idx = text.indexOf(find, startIndex = start, ignoreCase = true)
@@ -2099,6 +2195,7 @@ class EditorActivity : Activity() {
     }
 
     private fun replaceAll(find: String, replacement: String) {
+        if (editor.readOnly) return
         val current = editor.textString()
         val updated = current.replace(find, replacement, ignoreCase = true)
         if (updated == current) {

@@ -99,9 +99,9 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_CRLF, false)
         set(v) = prefs.edit().putBoolean(KEY_CRLF, v).apply()
 
-    var fileTypeFilter: Boolean
-        get() = prefs.getBoolean(KEY_TYPE_FILTER, true)
-        set(v) = prefs.edit().putBoolean(KEY_TYPE_FILTER, v).apply()
+    // Item 73: fileTypeFilter was removed — the open picker no
+    // longer filters by type at all (every file opens as text).
+    // The stored "file_type_filter" pref, if present, is ignored.
 
     var sortByName: Boolean
         get() = prefs.getBoolean(KEY_SORT_BY_NAME, false)
@@ -140,7 +140,7 @@ class AppSettings(context: Context) {
         private const val KEY_UNDO_BY_BACK = "undo_by_back"
         private const val KEY_ENCODING = "encoding"
         private const val KEY_CRLF = "crlf"
-        private const val KEY_TYPE_FILTER = "file_type_filter"
+        // "file_type_filter" key retired in item 73.
         private const val KEY_SORT_BY_NAME = "sort_by_name"
         private const val KEY_VISUAL_STYLE = "visual_style"
 
