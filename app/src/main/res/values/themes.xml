@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Slide-up panel (used for the home screen "+" action sheet) -->
+    <style name="Dialog.SlideUp" parent="android:Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowEnterAnimation">@anim/slide_up</item>
+        <item name="android:windowExitAnimation">@anim/slide_down</item>
+    </style>
+
+    <!-- Base name kept for the manifest; ThemeHelper picks the exact
+         Light/Dark + accent style at runtime, so EVERY framework control
+         (checkboxes, radios, seek bars, dialogs, cursor) follows the
+         user's chosen color. -->
+    <style name="Theme.EditNote" parent="Theme.EditNote.Light.Orange" />
+
+    <!-- Light -->
+    <style name="Theme.EditNote.Light.Orange" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#F57C00</item>
+        <item name="android:windowBackground">#FAFAFA</item>
+        <item name="android:statusBarColor">#FAFAFA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#FAFAFA</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Theme.EditNote.Light.Green" parent="Theme.EditNote.Light.Orange">
+        <item name="android:colorAccent">#2E7D32</item>
+    </style>
+    <style name="Theme.EditNote.Light.Blue" parent="Theme.EditNote.Light.Orange">
+        <item name="android:colorAccent">#1976D2</item>
+    </style>
+    <style name="Theme.EditNote.Light.Purple" parent="Theme.EditNote.Light.Orange">
+        <item name="android:colorAccent">#7B1FA2</item>
+    </style>
+    <style name="Theme.EditNote.Light.Teal" parent="Theme.EditNote.Light.Orange">
+        <item name="android:colorAccent">#00796B</item>
+    </style>
+    <style name="Theme.EditNote.Light.Mono" parent="Theme.EditNote.Light.Orange">
+        <item name="android:colorAccent">#111111</item>
+    </style>
+
+    <!-- Dark -->
+    <style name="Theme.EditNote.Dark.Orange" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#F57C00</item>
+        <item name="android:windowBackground">#111111</item>
+        <item name="android:statusBarColor">#111111</item>
+        <item name="android:navigationBarColor">#111111</item>
+    </style>
+    <style name="Theme.EditNote.Dark.Green" parent="Theme.EditNote.Dark.Orange">
+        <item name="android:colorAccent">#2E7D32</item>
+    </style>
+    <style name="Theme.EditNote.Dark.Blue" parent="Theme.EditNote.Dark.Orange">
+        <item name="android:colorAccent">#1976D2</item>
+    </style>
+    <style name="Theme.EditNote.Dark.Purple" parent="Theme.EditNote.Dark.Orange">
+        <item name="android:colorAccent">#7B1FA2</item>
+    </style>
+    <style name="Theme.EditNote.Dark.Teal" parent="Theme.EditNote.Dark.Orange">
+        <item name="android:colorAccent">#00796B</item>
+    </style>
+    <style name="Theme.EditNote.Dark.Mono" parent="Theme.EditNote.Dark.Orange">
+        <item name="android:colorAccent">#FFFFFF</item>
+    </style>
+</resources>
