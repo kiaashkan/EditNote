@@ -47,11 +47,27 @@
         </LinearLayout>
 
         <ImageButton
+            android:id="@+id/btnFileMenu"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="File menu"
+            android:src="@drawable/ic_file_doc" />
+
+        <ImageButton
+            android:id="@+id/btnEditMenu"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Edit menu"
+            android:src="@drawable/ic_edit" />
+
+        <ImageButton
             android:id="@+id/btnEditorMenu"
             android:layout_width="44dp"
             android:layout_height="44dp"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Menu"
+            android:contentDescription="Options menu"
             android:src="@drawable/ic_more_vert" />
     </LinearLayout>
 
@@ -77,6 +93,63 @@
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="#33888888" />
+
+    <!-- Inline find bar: appears when the toolbar's search icon is tapped.
+         Previous/next live here, with the search, not on the main toolbar. -->
+    <LinearLayout
+        android:id="@+id/findBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/findField"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="Find in text"
+            android:imeOptions="actionSearch"
+            android:singleLine="true"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/findCounter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingEnd="4dp"
+            android:textSize="12sp" />
+
+        <ImageButton
+            android:id="@+id/btnFindBarPrev"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Previous match"
+            android:src="@drawable/ic_arrow_up" />
+
+        <ImageButton
+            android:id="@+id/btnFindBarNext"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Next match"
+            android:src="@drawable/ic_arrow_down" />
+
+        <ImageButton
+            android:id="@+id/btnFindBarClose"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Close find"
+            android:src="@drawable/ic_close" />
+    </LinearLayout>
 
     <!-- Editor with line-number gutter -->
     <LinearLayout
@@ -180,24 +253,6 @@
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="Find"
             android:src="@drawable/ic_search" />
-
-        <ImageButton
-            android:id="@+id/btnFindPrev"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Find previous"
-            android:src="@drawable/ic_arrow_up" />
-
-        <ImageButton
-            android:id="@+id/btnFindNext"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Find next"
-            android:src="@drawable/ic_arrow_down" />
 
         <ImageButton
             android:id="@+id/btnSave"

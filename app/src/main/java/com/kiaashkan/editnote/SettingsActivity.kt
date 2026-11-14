@@ -3,7 +3,6 @@ package com.kiaashkan.editnote
 import android.app.Activity
 import android.os.Bundle
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.RadioGroup
@@ -32,7 +31,25 @@ class SettingsActivity : Activity() {
         findViewById<TextView>(R.id.headerEditor).setTextColor(palette.accent)
         findViewById<TextView>(R.id.headerFiles).setTextColor(palette.accent)
 
+        // Grouped cards for every settings section.
+        val cardBg = palette.cardDrawable(16f, resources.displayMetrics.density)
+        findViewById<LinearLayout>(R.id.cardAppearance).background = cardBg
+        findViewById<LinearLayout>(R.id.cardEditor).background =
+            palette.cardDrawable(16f, resources.displayMetrics.density)
+        findViewById<LinearLayout>(R.id.cardFiles).background =
+            palette.cardDrawable(16f, resources.displayMetrics.density)
+
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finish() }
+
+        // About card: rounded card background + tappable GitHub rows.
+        findViewById<LinearLayout>(R.id.aboutCard).background =
+            palette.cardDrawable(16f, resources.displayMetrics.density)
+        findViewById<LinearLayout>(R.id.aboutGithub).setOnClickListener {
+            openUrl("https://github.com/kiaashkan")
+        }
+        findViewById<LinearLayout>(R.id.aboutRepo).setOnClickListener {
+            openUrl("https://github.com/kiaashkan/EditNote")
+        }
 
         // Theme
         val themeGroup = findViewById<RadioGroup>(R.id.themeGroup)
@@ -65,8 +82,9 @@ class SettingsActivity : Activity() {
             AppSettings.ACCENT_TEAL to "Teal"
         )
         fun refreshAccentLabel() {
-            accentLabel.text = "Accent color: ${names[settings.accent] ?: "Orange"}"
+            accentLabel.text = names[settings.accent] ?: "Orange"
         }
+        accentLabel.setTextColor(palette.accent)
         refreshAccentLabel()
         AppSettings.ACCENTS.forEach { accentName ->
             val swatchColor = AppSettings.colorFor(accentName, settings.isDark(this))
@@ -95,8 +113,9 @@ class SettingsActivity : Activity() {
         val fontLabel = findViewById<TextView>(R.id.fontSizeLabel)
         val fontSeek = findViewById<SeekBar>(R.id.fontSizeSeek)
         fun refreshFontLabel() {
-            fontLabel.text = "Font size: ${settings.fontSizeSp.toInt()}"
+            fontLabel.text = "${settings.fontSizeSp.toInt()}sp"
         }
+        fontLabel.setTextColor(palette.accent)
         fontSeek.progress = (settings.fontSizeSp.toInt() - 13).coerceIn(0, 10)
         refreshFontLabel()
         fontSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -115,8 +134,9 @@ class SettingsActivity : Activity() {
         val spacingLabel = findViewById<TextView>(R.id.lineSpacingLabel)
         val spacingSeek = findViewById<SeekBar>(R.id.lineSpacingSeek)
         fun refreshSpacingLabel() {
-            spacingLabel.text = "Line spacing: ${settings.lineSpacingSp.toInt()}sp"
+            spacingLabel.text = "${settings.lineSpacingSp.toInt()}sp"
         }
+        spacingLabel.setTextColor(palette.accent)
         spacingSeek.progress = settings.lineSpacingSp.toInt().coerceIn(0, 8)
         refreshSpacingLabel()
         spacingSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -141,12 +161,13 @@ class SettingsActivity : Activity() {
         bindCheck(R.id.checkAutoCap, settings.autoCapitalize) { settings.autoCapitalize = it }
         bindCheck(R.id.checkUndoByBack, settings.undoByBack) { settings.undoByBack = it }
 
-        val indentBtn = findViewById<Button>(R.id.btnIndent)
+        val indentValue = findViewById<TextView>(R.id.indentValue)
         fun refreshIndent() {
-            indentBtn.text = "Indentation: " + if (settings.indentWithTab) "Tab" else "4 spaces"
+            indentValue.text = if (settings.indentWithTab) "Tab" else "4 spaces"
         }
+        indentValue.setTextColor(palette.accent)
         refreshIndent()
-        indentBtn.setOnClickListener {
+        findViewById<android.view.View>(R.id.rowIndent).setOnClickListener {
             settings.indentWithTab = !settings.indentWithTab
             refreshIndent()
         }
@@ -155,7 +176,7 @@ class SettingsActivity : Activity() {
         bindCheck(R.id.checkAutosave, settings.autosave) { settings.autosave = it }
         bindCheck(R.id.checkAutosaveConfirm, settings.autosaveConfirm) { settings.autosaveConfirm = it }
 
-        val intervalBtn = findViewById<Button>(R.id.btnAutosaveInterval)
+        val intervalValue = findViewById<TextView>(R.id.intervalValue)
         val intervals = listOf(30, 60, 120, 300)
         fun intervalLabel(sec: Int): String = when (sec) {
             30 -> "30 seconds"
@@ -164,33 +185,36 @@ class SettingsActivity : Activity() {
             else -> "5 minutes"
         }
         fun refreshInterval() {
-            intervalBtn.text = "Autosave interval: ${intervalLabel(settings.autosaveIntervalSec)}"
+            intervalValue.text = intervalLabel(settings.autosaveIntervalSec)
         }
+        intervalValue.setTextColor(palette.accent)
         refreshInterval()
-        intervalBtn.setOnClickListener {
+        findViewById<android.view.View>(R.id.rowInterval).setOnClickListener {
             val idx = intervals.indexOf(settings.autosaveIntervalSec).let { if (it < 0) 1 else it }
             settings.autosaveIntervalSec = intervals[(idx + 1) % intervals.size]
             refreshInterval()
         }
 
-        val encodingBtn = findViewById<Button>(R.id.btnEncoding)
+        val encodingValue = findViewById<TextView>(R.id.encodingValue)
         fun refreshEncoding() {
-            encodingBtn.text = "Default encoding: ${settings.encoding}"
+            encodingValue.text = settings.encoding
         }
+        encodingValue.setTextColor(palette.accent)
         refreshEncoding()
-        encodingBtn.setOnClickListener {
+        findViewById<android.view.View>(R.id.rowEncoding).setOnClickListener {
             val list = AppSettings.ENCODINGS
             val idx = list.indexOf(settings.encoding).let { if (it < 0) 0 else it }
             settings.encoding = list[(idx + 1) % list.size]
             refreshEncoding()
         }
 
-        val lineBreakBtn = findViewById<Button>(R.id.btnLineBreak)
+        val lineBreakValue = findViewById<TextView>(R.id.lineBreakValue)
         fun refreshLineBreak() {
-            lineBreakBtn.text = "Line break: " + if (settings.crlf) "CRLF (Windows)" else "LF"
+            lineBreakValue.text = if (settings.crlf) "CRLF (Windows)" else "LF"
         }
+        lineBreakValue.setTextColor(palette.accent)
         refreshLineBreak()
-        lineBreakBtn.setOnClickListener {
+        findViewById<android.view.View>(R.id.rowLineBreak).setOnClickListener {
             settings.crlf = !settings.crlf
             refreshLineBreak()
         }
@@ -200,8 +224,25 @@ class SettingsActivity : Activity() {
     }
 
     private fun bindCheck(id: Int, initial: Boolean, save: (Boolean) -> Unit) {
-        val box = findViewById<CheckBox>(id)
+        val box = findViewById<android.widget.CompoundButton>(id)
         box.isChecked = initial
         box.setOnCheckedChangeListener { _, checked -> save(checked) }
+        // Tapping anywhere on the row toggles the switch.
+        (box.parent as? android.view.View)?.setOnClickListener { box.toggle() }
+    }
+
+    private fun openUrl(url: String) {
+        try {
+            startActivity(
+                android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url)
+                )
+            )
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(
+                this, "No browser available", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 }

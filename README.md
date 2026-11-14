@@ -22,7 +22,7 @@ important hides inside the app.
 
 **Editor**
 - Multiple open files with tabs (`*` marks unsaved changes), line numbers
-- Icon mini toolbar: Open, Undo, Redo, Find, Find previous/next, Save, Close tab
+- Icon mini toolbar: Open, Undo, Redo, Find, Save, Close tab — and Find opens an inline find bar with a match counter and previous/next buttons
 - Full menu: New, Open, Open recent, Save, Save As, Reload, Close tab,
   Select All, Paste, Insert date & time, Increase/Decrease indent,
   Go to Line, Find & Replace, Statistics, Share, Print, Input method,

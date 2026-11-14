@@ -14,6 +14,7 @@ import android.print.PrintManager
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.view.inputmethod.EditorInfo
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -71,6 +72,9 @@ class EditorActivity : Activity() {
     private lateinit var tabStrip: LinearLayout
     private lateinit var accessoryScroll: View
     private lateinit var accessoryBar: LinearLayout
+    private lateinit var findBar: View
+    private lateinit var findField: EditText
+    private lateinit var findCounter: TextView
 
     private val docs = mutableListOf<Doc>()
     private var active = 0
@@ -175,15 +179,33 @@ class EditorActivity : Activity() {
         }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finishWithSave() }
-        findViewById<ImageButton>(R.id.btnEditorMenu).setOnClickListener { showEditorMenu(it) }
+        findViewById<ImageButton>(R.id.btnFileMenu).setOnClickListener { showFileMenu(it) }
+        findViewById<ImageButton>(R.id.btnEditMenu).setOnClickListener { showEditMenu(it) }
+        findViewById<ImageButton>(R.id.btnEditorMenu).setOnClickListener { showOptionsMenu(it) }
         findViewById<ImageButton>(R.id.btnOpenFile).setOnClickListener { pickExternalFile() }
         findViewById<ImageButton>(R.id.btnSave).setOnClickListener { onSavePressed() }
-        findViewById<ImageButton>(R.id.btnFind).setOnClickListener { promptFind() }
-        findViewById<ImageButton>(R.id.btnFindNext).setOnClickListener {
-            if (lastQuery.isEmpty()) promptFind() else findNext()
-        }
-        findViewById<ImageButton>(R.id.btnFindPrev).setOnClickListener {
-            if (lastQuery.isEmpty()) promptFind() else findPrev()
+        findBar = findViewById(R.id.findBar)
+        findField = findViewById(R.id.findField)
+        findCounter = findViewById(R.id.findCounter)
+        findCounter.setTextColor(palette.textSecondary)
+        findViewById<ImageButton>(R.id.btnFind).setOnClickListener { toggleFindBar() }
+        findViewById<ImageButton>(R.id.btnFindBarNext).setOnClickListener { findNext() }
+        findViewById<ImageButton>(R.id.btnFindBarPrev).setOnClickListener { findPrev() }
+        findViewById<ImageButton>(R.id.btnFindBarClose).setOnClickListener { hideFindBar() }
+        findField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                lastQuery = s?.toString() ?: ""
+                lastFindIndex = -1
+                if (lastQuery.isNotEmpty()) findNext() else refreshFindCounter()
+            }
+        })
+        findField.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                findNext()
+                true
+            } else false
         }
         findViewById<ImageButton>(R.id.btnUndo).setOnClickListener { undo() }
         findViewById<ImageButton>(R.id.btnRedo).setOnClickListener { redo() }
@@ -797,34 +819,24 @@ class EditorActivity : Activity() {
 
     // --- Overflow menu & actions ------------------------------------------------------------
 
-    private fun showEditorMenu(anchor: View) {
+    // The editor's actions live behind THREE header buttons (KiA: one
+    // giant overflow list was too long and messy, but nothing may be
+    // deleted): a File menu (document icon), an Edit menu (pencil icon)
+    // and an Options menu (⋮). Every action from the old single menu
+    // exists in exactly one of the three.
+
+    /** File menu: everything about the document as a file. */
+    private fun showFileMenu(anchor: View) {
         val menu = PopupMenu(this, anchor)
         menu.menu.add(0, M_NEW_TAB, 0, "New")
         menu.menu.add(0, M_OPEN_FILE, 1, "Open…")
-        menu.menu.add(0, M_SAVE, 3, "Save")
-        menu.menu.add(0, M_SAVE_AS, 4, "Save as…")
-        menu.menu.add(0, M_RELOAD, 5, "Reload")
-        menu.menu.add(0, M_CLOSE_TAB, 6, "Close tab")
-        menu.menu.add(0, M_SELECT_ALL, 7, "Select all")
-        menu.menu.add(0, M_PASTE, 8, "Paste")
-        menu.menu.add(0, M_INSERT_TIME, 9, "Insert date & time")
-        menu.menu.add(0, M_INDENT, 10, "Increase indent")
-        menu.menu.add(0, M_OUTDENT, 11, "Decrease indent")
-        menu.menu.add(0, M_GOTO, 12, "Go to line…")
-        menu.menu.add(0, M_REPLACE, 13, "Find & Replace…")
-        menu.menu.add(0, M_STATS, 14, "Statistics")
-        menu.menu.add(0, M_SHARE, 15, "Share")
-        menu.menu.add(0, M_PRINT, 16, "Print")
-        menu.menu.add(0, M_VISUAL_STYLE, 17, "Visual style…")
-        menu.menu.add(0, M_ENCODING, 18, "Encoding…")
-        menu.menu.add(0, M_SYNTAX, 19, "Syntax…")
-        val wrapItem = menu.menu.add(0, M_WRAP, 20, "Word wrap")
-        wrapItem.isCheckable = true
-        wrapItem.isChecked = settings.wordWrap
-        val roItem = menu.menu.add(0, M_READ_ONLY, 21, "Read only")
-        roItem.isCheckable = true
-        roItem.isChecked = readOnly
-        menu.menu.add(0, M_SETTINGS, 22, "Settings")
+        menu.menu.add(0, M_SAVE, 2, "Save")
+        menu.menu.add(0, M_SAVE_AS, 3, "Save as…")
+        menu.menu.add(0, M_RELOAD, 4, "Reload")
+        menu.menu.add(0, M_CLOSE_TAB, 5, "Close tab")
+        menu.menu.add(0, M_SHARE, 6, "Share")
+        menu.menu.add(0, M_PRINT, 7, "Print")
+        menu.menu.add(0, M_SETTINGS, 8, "Settings")
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 M_NEW_TAB -> addDoc(newDraftDoc("Untitled"))
@@ -833,6 +845,28 @@ class EditorActivity : Activity() {
                 M_SAVE_AS -> promptSaveAs()
                 M_RELOAD -> reloadActive()
                 M_CLOSE_TAB -> closeTab(active)
+                M_SHARE -> shareText()
+                M_PRINT -> printActive()
+                M_SETTINGS -> startActivity(Intent(this, SettingsActivity::class.java))
+            }
+            true
+        }
+        menu.show()
+    }
+
+    /** Edit menu: everything that acts on the text. */
+    private fun showEditMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        menu.menu.add(0, M_SELECT_ALL, 0, "Select all")
+        menu.menu.add(0, M_PASTE, 1, "Paste")
+        menu.menu.add(0, M_INSERT_TIME, 2, "Insert date & time")
+        menu.menu.add(0, M_INDENT, 3, "Increase indent")
+        menu.menu.add(0, M_OUTDENT, 4, "Decrease indent")
+        menu.menu.add(0, M_GOTO, 5, "Go to line…")
+        menu.menu.add(0, M_REPLACE, 6, "Find & Replace…")
+        menu.menu.add(0, M_STATS, 7, "Statistics")
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
                 M_SELECT_ALL -> editor.selectAll()
                 M_PASTE -> pasteFromClipboard()
                 M_INSERT_TIME -> insertAtCursor(
@@ -843,8 +877,26 @@ class EditorActivity : Activity() {
                 M_GOTO -> promptGoToLine()
                 M_REPLACE -> promptReplace()
                 M_STATS -> showStats()
-                M_SHARE -> shareText()
-                M_PRINT -> printActive()
+            }
+            true
+        }
+        menu.show()
+    }
+
+    /** Options menu (⋮): how the editor looks and treats this file. */
+    private fun showOptionsMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        menu.menu.add(0, M_VISUAL_STYLE, 0, "Visual style…")
+        menu.menu.add(0, M_ENCODING, 1, "Encoding…")
+        menu.menu.add(0, M_SYNTAX, 2, "Syntax…")
+        val wrapItem = menu.menu.add(0, M_WRAP, 3, "Word wrap")
+        wrapItem.isCheckable = true
+        wrapItem.isChecked = settings.wordWrap
+        val roItem = menu.menu.add(0, M_READ_ONLY, 4, "Read only")
+        roItem.isCheckable = true
+        roItem.isChecked = readOnly
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
                 M_VISUAL_STYLE -> promptVisualStyle()
                 M_ENCODING -> promptEncoding()
                 M_SYNTAX -> promptSyntax()
@@ -853,7 +905,6 @@ class EditorActivity : Activity() {
                     editor.setHorizontallyScrolling(!settings.wordWrap)
                 }
                 M_READ_ONLY -> setReadOnly(!readOnly)
-                M_SETTINGS -> startActivity(Intent(this, SettingsActivity::class.java))
             }
             true
         }
@@ -987,6 +1038,8 @@ class EditorActivity : Activity() {
                 .show()
         } else doReload()
     }
+
+
 
     private fun pasteFromClipboard() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -1191,20 +1244,67 @@ class EditorActivity : Activity() {
 
     // --- Find / replace / stats / share ----------------------------------------------------------
 
-    private fun promptFind() {
-        val input = EditText(this).apply {
-            setText(lastQuery)
-            hint = "Text to find"
+    // --- Inline find bar ---------------------------------------------------
+    // The old toolbar had separate up/down buttons next to the search
+    // icon; KiA flagged them as doing "the same job as the magnifier".
+    // They were find-previous/next, so they now live in the find bar
+    // itself — the main toolbar keeps only the search icon.
+
+    private fun toggleFindBar() {
+        if (findBar.visibility == View.VISIBLE) hideFindBar() else showFindBar()
+    }
+
+    private fun showFindBar() {
+        findBar.visibility = View.VISIBLE
+        if (findField.text.toString() != lastQuery) {
+            findField.setText(lastQuery)
         }
-        AlertDialog.Builder(this)
-            .setTitle("Find in text")
-            .setView(input)
-            .setPositiveButton("Find next") { _, _ ->
-                lastQuery = input.text.toString()
-                findNext()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        findField.requestFocus()
+        findField.selectAll()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE)
+            as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(findField, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        refreshFindCounter()
+    }
+
+    private fun hideFindBar() {
+        findBar.visibility = View.GONE
+        editor.requestFocus()
+    }
+
+    /** All match start offsets for the current query (case-insensitive). */
+    private fun matchOffsets(): List<Int> {
+        if (lastQuery.isEmpty()) return emptyList()
+        val text = editor.text.toString()
+        val out = mutableListOf<Int>()
+        var from = 0
+        while (true) {
+            val idx = text.indexOf(lastQuery, startIndex = from, ignoreCase = true)
+            if (idx < 0) break
+            out.add(idx)
+            from = idx + 1
+            if (out.size > 9999) break
+        }
+        return out
+    }
+
+    private fun refreshFindCounter() {
+        if (!::findCounter.isInitialized) return
+        if (lastQuery.isEmpty()) {
+            findCounter.text = ""
+            return
+        }
+        val matches = matchOffsets()
+        if (matches.isEmpty()) {
+            findCounter.text = "0/0"
+            return
+        }
+        val current = matches.indexOf(lastFindIndex)
+        findCounter.text = if (current >= 0) {
+            "${current + 1}/${matches.size}"
+        } else {
+            "${matches.size}"
+        }
     }
 
     private fun findNext() {
@@ -1213,12 +1313,15 @@ class EditorActivity : Activity() {
         var idx = text.indexOf(lastQuery, startIndex = lastFindIndex + 1, ignoreCase = true)
         if (idx < 0) idx = text.indexOf(lastQuery, startIndex = 0, ignoreCase = true)
         if (idx < 0) {
-            Toast.makeText(this, "Not found: $lastQuery", Toast.LENGTH_SHORT).show()
+            if (findBar.visibility != View.VISIBLE) {
+                Toast.makeText(this, "Not found: $lastQuery", Toast.LENGTH_SHORT).show()
+            }
+            refreshFindCounter()
             return
         }
         lastFindIndex = idx
-        editor.requestFocus()
         editor.setSelection(idx, idx + lastQuery.length)
+        refreshFindCounter()
     }
 
     private fun findPrev() {
@@ -1229,12 +1332,15 @@ class EditorActivity : Activity() {
         } else -1
         if (idx < 0) idx = text.lastIndexOf(lastQuery, startIndex = text.length, ignoreCase = true)
         if (idx < 0) {
-            Toast.makeText(this, "Not found: $lastQuery", Toast.LENGTH_SHORT).show()
+            if (findBar.visibility != View.VISIBLE) {
+                Toast.makeText(this, "Not found: $lastQuery", Toast.LENGTH_SHORT).show()
+            }
+            refreshFindCounter()
             return
         }
         lastFindIndex = idx
-        editor.requestFocus()
         editor.setSelection(idx, idx + lastQuery.length)
+        refreshFindCounter()
     }
 
     private fun promptReplace() {
@@ -1351,13 +1457,14 @@ class EditorActivity : Activity() {
         private const val M_OPEN_FILE = 2
         private const val M_SAVE = 22
         private const val M_SAVE_AS = 6
-        private const val M_RELOAD = 23
         private const val M_CLOSE_TAB = 24
         private const val M_SELECT_ALL = 25
         private const val M_PASTE = 26
-        private const val M_INSERT_TIME = 27
         private const val M_INDENT = 28
         private const val M_OUTDENT = 29
+        private const val M_WRAP = 7
+        private const val M_RELOAD = 23
+        private const val M_INSERT_TIME = 27
         private const val M_GOTO = 3
         private const val M_REPLACE = 10
         private const val M_STATS = 4
@@ -1366,7 +1473,6 @@ class EditorActivity : Activity() {
         private const val M_VISUAL_STYLE = 31
         private const val M_ENCODING = 32
         private const val M_SYNTAX = 33
-        private const val M_WRAP = 7
         private const val M_READ_ONLY = 8
         private const val M_SETTINGS = 9
         private const val EXTRA_EXTERNAL_URI = "external_uri"
