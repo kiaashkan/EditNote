@@ -136,5 +136,3 @@ EditNote رایگان است — بدون تبلیغ و بدون ردیابی. �
 ```
 UQB6Wphj-CHN1kSwU5fzgMUval6SdJljEhX-52q5qP-yKbTg
 ```
-
-ممنون! ❤️
