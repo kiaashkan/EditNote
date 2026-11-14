@@ -1,13 +1,15 @@
 # EditNote
 
+[فارسی](README.fa.md) | English
+
 A tiny, fully offline Android text editor — no ads, no account, and no
 internet permission at all. Written from scratch in native Kotlin using only
 the Android framework (no third-party libraries), so the APK stays small.
 
-Made by KiA as a clean replacement for ad-heavy editors.
+Built by KiA Ashkan, with the help of Muse, as a clean replacement for ad-heavy editors.
 
 **Download:** see the [Releases](../../releases) page — grab
-`EditNote-v1.0.0.apk` and install it. Android 8.0 or newer; the same APK
+the latest `EditNote-vX.Y.Z.apk` and install it. Android 8.0 or newer; the same APK
 works on every phone and processor (the app contains no native code).
 
 ## Your files stay yours
@@ -23,21 +25,31 @@ important hides inside the app.
 **Editor**
 - Multiple open files with tabs (`*` marks unsaved changes), line numbers
 - Icon mini toolbar: Open, Undo, Redo, Find, Save, Close tab — and Find opens an inline find bar with a match counter and previous/next buttons
-- Full menu: New, Open, Open recent, Save, Save As, Reload, Close tab,
-  Select All, Paste, Insert date & time, Increase/Decrease indent,
-  Go to Line, Find & Replace, Statistics, Share, Print, Input method,
-  Word Wrap, Read Only, Settings
+- Three tidy header menus: **File** (New, Open, Save, Save As, Reload,
+  Close tab, Share, Print, Settings), **Edit** (Select All, Paste,
+  Insert date & time, Increase/Decrease indent, Go to Line,
+  Find & Replace, Statistics) and **Options** (Visual style, Encoding,
+  Syntax, Word Wrap, Read Only), drawn as modern card popups
 - Find & Replace (single or replace all), Go to Line, text statistics
-- Basic syntax highlighting for code files; print support
+- Real syntax highlighting for 22 languages and 16 visual styles
+  (GitHub, Monokai, Dracula, Solarized, …)
+- Per-file encoding: UTF-8, UTF-16, UTF-32, windows-1256, windows-1252,
+  windows-1251, ISO-8859-1, US-ASCII, with BOM detection
+- Print support
 - Optional accessory symbol bar (Tab, cursor arrows, common symbols)
 - Undo/redo history per tab
 
 **Home**
-- Recent device files with bookmarks, search, sort A–Z, clear history
+- Recent device files with bookmarks and search; sort A–Z, reset list
+  and settings are direct icon buttons in the header
 - Floating **+** button: two small actions (New file, Open a file) pop up right above it
 - Resume last session with the same tabs
 
 **Settings**
+- A modern grouped-cards layout with switches; an About card with the
+  maker's GitHub and an **Update EditNote** row that opens the latest
+  GitHub release (the app still requests zero permissions, so updates
+  happen in your browser)
 - Theme (System / Light / Dark) and accent colors (Orange by default, plus
   Black/White that adapts to the theme, Green, Blue, Purple, Teal) — every
   control in the app follows the chosen color
@@ -45,7 +57,8 @@ important hides inside the app.
 - Auto indent, indentation unit (Tab / 4 spaces), word suggestions,
   auto capitalize, undo with the Back button
 - Autosave with optional confirmation message and interval (30 s – 5 min)
-- Default encoding (UTF-8, UTF-16, Windows-1256, Windows-1252, ISO-8859-1)
+- Default encoding (UTF-8, UTF-16, UTF-32, Windows-1256, Windows-1252,
+  Windows-1251, ISO-8859-1, US-ASCII)
 - Line break style (LF / CRLF), text-file filter for the open picker,
   resume session
 
