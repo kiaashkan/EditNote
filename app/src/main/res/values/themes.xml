@@ -15,7 +15,7 @@
 
     <!-- Light -->
     <style name="Theme.EditNote.Light.Orange" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:colorAccent">#F57C00</item>
+        <item name="android:colorAccent">#DA7151</item>
         <item name="android:windowBackground">#FAFAFA</item>
         <item name="android:statusBarColor">#FAFAFA</item>
         <item name="android:windowLightStatusBar">true</item>
@@ -40,7 +40,7 @@
 
     <!-- Dark -->
     <style name="Theme.EditNote.Dark.Orange" parent="android:Theme.Material.NoActionBar">
-        <item name="android:colorAccent">#F57C00</item>
+        <item name="android:colorAccent">#DA7151</item>
         <item name="android:windowBackground">#111111</item>
         <item name="android:statusBarColor">#111111</item>
         <item name="android:navigationBarColor">#111111</item>

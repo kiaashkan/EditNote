@@ -174,7 +174,7 @@ class AppSettings(context: Context) {
             ACCENT_TEAL -> Color.rgb(0, 121, 107)
             ACCENT_GREEN -> Color.rgb(46, 125, 50)
             ACCENT_MONO -> if (dark) Color.WHITE else Color.rgb(17, 17, 17)
-            else -> Color.rgb(245, 124, 0) // orange (default)
+            else -> Color.rgb(218, 113, 81) // orange (default) — the logo color #DA7151
         }
     }
 }

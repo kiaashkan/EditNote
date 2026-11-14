@@ -143,17 +143,38 @@ class MainActivity : Activity() {
         view.findViewById<View>(R.id.sheetRoot).background =
             palette.cardDrawable(18f, density)
         view.findViewById<TextView>(R.id.sheetTitle).setTextColor(palette.textPrimary)
-        val newBtn = view.findViewById<Button>(R.id.sheetNew)
-        newBtn.background = palette.chipDrawable(true, density)
-        newBtn.setTextColor(palette.onAccent)
-        newBtn.setOnClickListener {
+        fun roundedTile(color: Int, alpha: Int): android.graphics.drawable.GradientDrawable =
+            android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = 14f * density
+                setColor(
+                    android.graphics.Color.argb(
+                        alpha,
+                        android.graphics.Color.red(color),
+                        android.graphics.Color.green(color),
+                        android.graphics.Color.blue(color)
+                    )
+                )
+            }
+        val newRow = view.findViewById<View>(R.id.sheetNew)
+        newRow.background = palette.cardDrawable(16f, density)
+        view.findViewById<View>(R.id.sheetNewTile).background =
+            roundedTile(palette.accent, 255)
+        view.findViewById<TextView>(R.id.sheetNewTitle).setTextColor(palette.textPrimary)
+        view.findViewById<TextView>(R.id.sheetNewSub).setTextColor(palette.textSecondary)
+        newRow.setOnClickListener {
             dialog.dismiss()
             promptNewFile()
         }
-        val openBtn = view.findViewById<Button>(R.id.sheetOpen)
-        openBtn.background = palette.cardDrawable(12f, density)
-        openBtn.setTextColor(palette.textPrimary)
-        openBtn.setOnClickListener {
+        val openRow = view.findViewById<View>(R.id.sheetOpen)
+        openRow.background = palette.cardDrawable(16f, density)
+        view.findViewById<View>(R.id.sheetOpenTile).background =
+            roundedTile(palette.accent, 36)
+        view.findViewById<android.widget.ImageView>(R.id.sheetOpenIcon)
+            .setColorFilter(palette.accent)
+        view.findViewById<TextView>(R.id.sheetOpenTitle).setTextColor(palette.textPrimary)
+        view.findViewById<TextView>(R.id.sheetOpenSub).setTextColor(palette.textSecondary)
+        openRow.setOnClickListener {
             dialog.dismiss()
             pickExternalFile()
         }

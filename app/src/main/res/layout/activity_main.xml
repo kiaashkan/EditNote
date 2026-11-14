@@ -77,16 +77,19 @@
         android:dividerHeight="0dp"
         android:paddingBottom="24dp" />
 
+</LinearLayout>
+
     <TextView
         android:id="@+id/emptyText"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginStart="40dp"
+        android:layout_marginEnd="40dp"
         android:gravity="center"
-        android:padding="24dp"
-        android:text="No files yet.\nTap + to open a text file from your device, or create a new one — you choose where it is saved."
+        android:text="No files yet.\nTap + to create a new file, or open one from your device."
         android:textSize="15sp"
         android:visibility="gone" />
-</LinearLayout>
 
     <Button
         android:id="@+id/btnFab"
@@ -94,7 +97,7 @@
         android:layout_height="58dp"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="20dp"
-        android:layout_marginBottom="24dp"
+        android:layout_marginBottom="48dp"
         android:text="+"
         android:textColor="#FFFFFF"
         android:textSize="30sp" />

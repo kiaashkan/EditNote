@@ -65,6 +65,16 @@ Releases follow [Semantic Versioning](https://semver.org):
 - Every release APK is signed with the same release certificate, so new
   versions install as updates over older ones.
 
+## Installing
+
+When you install the APK, Google Play Protect may say
+**"App scan recommended — Play Protect hasn't seen this app before."**
+That prompt appears for *every* app installed from outside Google Play;
+it is not an error and it does not mean the app is unsafe. Choose
+**Install without scanning** (or let it scan once — EditNote requests zero
+permissions and works fully offline). After a clean scan, the prompt
+normally stops appearing for EditNote.
+
 ## Building
 
 Normal build: `./gradlew assembleDebug` (Android Studio / Gradle).
