@@ -526,10 +526,24 @@ object SyntaxHighlighter {
                 lineStart = false
                 continue
             }
-            // Words: keywords / builtins.
-            if (c.isLetter() || c == '_' || c == '$') {
+            // Words: keywords / builtins. '$' only starts a word
+            // in $variable languages (PHP/Shell — and there the
+            // variables branch above already took $name). In every
+            // other language a bare '$' (jQuery's $(...), a stray
+            // $ in code) is NOT a word char, so entering here with
+            // it made the scan loop forever without advancing —
+            // an ANR on the synchronous path and a permanently
+            // wedged highlight executor on the async ones (audit,
+            // item 68; JVM-verified hang on "$(document)...").
+            if (c.isLetter() || c == '_' ||
+                (c == '$' && lang.variables)
+            ) {
                 var j = i
                 while (j < n && isWordChar(src[j], lang)) j++
+                // Progress guarantee: a scanner branch must never
+                // be able to stall, whatever future edits do to
+                // the entry conditions above.
+                if (j == i) j = i + 1
                 val word = src.substring(i, j)
                 val probe = if (lang.caseInsensitive) word.uppercase() else word
                 when {

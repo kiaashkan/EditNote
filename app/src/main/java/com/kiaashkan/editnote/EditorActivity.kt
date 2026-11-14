@@ -73,7 +73,16 @@ class EditorActivity : Activity() {
         /** True while the background loader (item 64) is reading
          *  this document; the editor shows a spinner and stays
          *  read-only until the content lands. */
-        var pendingLoad: Boolean = false
+        var pendingLoad: Boolean = false,
+        /** True when the source app handed this file over with a
+         *  read-only grant (item 65 — e.g. "Open with" from Google
+         *  Drive): it can be read but never written back, so Save
+         *  goes straight to the create-file picker and the copy
+         *  becomes the document's home — no error is ever shown.
+         *  Set at open from the intent flags, or later when a
+         *  write is denied despite looking writable. Cleared when
+         *  the doc is rebound to a user-picked location. */
+        var readOnlySource: Boolean = false
     )
 
     private lateinit var settings: AppSettings
@@ -367,7 +376,35 @@ class EditorActivity : Activity() {
                 val uri = intent.data!!
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                listOf(pendingDoc(uri, name))
+                // Item 65: "Open with" from another app (Drive,
+                // Gmail, …) arrives with per-URI grant flags. Take
+                // the persistable permission when the sender offers
+                // it, and remember when NO write grant came along —
+                // such a file can be read but never saved back, and
+                // Save must offer a copy instead of failing raw.
+                val flags = intent.flags
+                val canWrite =
+                    flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0
+                if (flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0) {
+                    var take = 0
+                    if (flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+                        take = take or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    }
+                    if (canWrite) {
+                        take = take or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    }
+                    if (take != 0) {
+                        try {
+                            contentResolver.takePersistableUriPermission(uri, take)
+                        } catch (e: SecurityException) { /* temporary grant only */ }
+                    }
+                }
+                listOf(pendingDoc(uri, name).apply {
+                    // Grant flags only exist for content:// URIs;
+                    // a file:// path is judged by its first write
+                    // instead (the saveDoc fallback marks it then).
+                    readOnlySource = !canWrite && uri.scheme == "content"
+                })
             }
             newName != null -> listOf(newDraftDoc(newName))
             else -> listOf(newDraftDoc("Untitled"))
@@ -497,6 +534,8 @@ class EditorActivity : Activity() {
                 statusView.text = "Draft · tap Save to choose where to keep it"
             doc.needsDestination -> statusView.text = "New file · not saved yet"
             doc.dirty -> statusView.text = "Unsaved changes"
+            doc.readOnlySource -> statusView.text =
+                "Read-only from source · Save saves a copy"
             else -> setStatusSaved()
         }
         // A document still loading in the background (item 64)
@@ -672,6 +711,26 @@ class EditorActivity : Activity() {
 
     private fun saveDoc(doc: Doc, silent: Boolean) {
         if (doc === docs.getOrNull(active)) stashActive()
+        // Item 65 (behaviour set by KiA): a read-only-source
+        // document can never be written back, and the user must
+        // never see a "Permission Denial" error for it. Autosave
+        // stays silent (status line only). A manual Save goes
+        // STRAIGHT to the create-file picker — no error, no
+        // extra dialog — so the user just confirms the name and
+        // place; the new file then becomes the document's home
+        // (the REQ_CREATE handler rebinds it), and later saves
+        // write there directly.
+        if (doc.readOnlySource && doc.uri != null) {
+            if (doc === docs.getOrNull(active)) {
+                if (silent) {
+                    statusView.text =
+                        "Read-only from source · tap Save to save a copy"
+                } else {
+                    promptSaveAs()
+                }
+            }
+            return
+        }
         try {
             when {
                 doc.uri != null -> TextFileIo.write(this, doc.uri!!, doc.text, doc.encoding)
@@ -690,9 +749,22 @@ class EditorActivity : Activity() {
             if (!silent) Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
             renderTabs()
         } catch (e: Exception) {
-            if (doc === docs.getOrNull(active)) statusView.text = "Save failed"
-            if (!silent) {
-                Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+            if (!silent && e is SecurityException && doc.uri != null &&
+                doc === docs.getOrNull(active)
+            ) {
+                // Item 65: the grant looked writable but the
+                // provider denied the write anyway (e.g. Drive).
+                // Remember it (the next Save skips the attempt)
+                // and — per KiA — show NO error: Save becomes
+                // "create a copy" via the picker, and the copy
+                // becomes the document's home.
+                doc.readOnlySource = true
+                promptSaveAs()
+            } else {
+                if (doc === docs.getOrNull(active)) statusView.text = "Save failed"
+                if (!silent) {
+                    Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -851,9 +923,16 @@ class EditorActivity : Activity() {
         editor.setLineSpacing(spacingPx, 1f)
         // Large-file mode (item 46) wins over the raw setting for
         // the document actually open — this runs on every resume
-        // and must not undo what loadDocIntoEditor decided.
+        // and must not undo what loadDocIntoEditor decided. The
+        // condition must mirror loadDocIntoEditor's EXACTLY,
+        // including item 64's longest-line criterion: judging by
+        // total length alone re-enabled wrap on every resume for
+        // a small file with one enormous line — the exact layout
+        // cost large-file mode exists to avoid (audit, item 68).
+        val activeMaxLine = docs.getOrNull(active)?.maxLine ?: 0
         editor.wordWrap = settings.wordWrap &&
-            editor.textLength() <= LARGE_FILE_CHARS
+            editor.textLength() <= LARGE_FILE_CHARS &&
+            activeMaxLine <= MAX_LINE_CHARS
         editor.noSuggestions = !settings.showSuggestions
         editor.autoCapitalize = settings.autoCapitalize
         accessoryScroll.visibility = if (settings.accessoryView) View.VISIBLE else View.GONE
@@ -888,10 +967,18 @@ class EditorActivity : Activity() {
         editor.invalidate()
     }
 
-    private fun applyHighlighting() {
+    /** Item 67: one-line diagnosis of the most recent highlight
+     *  pass, shown in Statistics. Every exit point of
+     *  [applyHighlighting] and every async delivery records what
+     *  actually happened, so a silent no-colour failure names its
+     *  own cause instead of being guessed at. */
+    private var highlightDiag: String = "not run yet"
+
+    private fun applyHighlighting(direct: Boolean = false) {
         val doc = docs.getOrNull(active) ?: return
         try {
             if (!settings.syntaxHighlight) {
+                highlightDiag = "off in Settings"
                 editor.highlightRanges = emptyList()
                 editor.codeBehaviors = false
                 editor.pairRanges = emptyList()
@@ -907,6 +994,8 @@ class EditorActivity : Activity() {
                     null
                 }
             if (lang == null) {
+                highlightDiag =
+                    "no language (syntax=${doc.syntax}, name=${doc.name})"
                 editor.highlightRanges = emptyList()
                 editor.codeBehaviors = false
                 editor.pairRanges = emptyList()
@@ -929,11 +1018,24 @@ class EditorActivity : Activity() {
             // version/length guards could silently swallow results
             // on-device, and colours simply never appeared for him
             // even with a manual JavaScript pick.
-            if (source.length <= SYNC_HIGHLIGHT_MAX) {
+            // Item 67: an EXPLICIT pick (Syntax / Visual Style menu)
+            // is direct — the user is staring at the screen waiting
+            // for colour, so up to the mid-tier cap the scan runs
+            // synchronously on the spot: no executor, no guards, no
+            // silent drop possible. A short hitch on a deliberate
+            // menu tap beats a silent nothing.
+            if (source.length <= SYNC_HIGHLIGHT_MAX ||
+                (direct && source.length <= CHUNKED_HIGHLIGHT_MIN)
+            ) {
                 currentPlan = null
                 editor.highlightRanges = try {
-                    SyntaxHighlighter.compute(source, lang, style)
+                    val ranges = SyntaxHighlighter.compute(source, lang, style)
+                    highlightDiag =
+                        "sync: ${ranges.size} ranges (${lang.id}, ${source.length} chars)"
+                    ranges
                 } catch (e: Exception) {
+                    highlightDiag =
+                        "sync: compute threw ${e.javaClass.simpleName} (${lang.id})"
                     emptyList()
                 }
                 return
@@ -946,6 +1048,8 @@ class EditorActivity : Activity() {
                 currentPlan = null
                 val docRef = doc
                 val version = ++highlightVersion
+                highlightDiag =
+                    "mid: queued (${lang.id}, ${source.length} chars)"
                 highlightExecutor.execute {
                     val ranges = try {
                         SyntaxHighlighter.compute(source, lang, style)
@@ -953,9 +1057,19 @@ class EditorActivity : Activity() {
                         emptyList()
                     }
                     runOnUiThread {
-                        if (version != highlightVersion) return@runOnUiThread
-                        if (docs.getOrNull(active) !== docRef) return@runOnUiThread
-                        if (editor.textLength() != source.length) return@runOnUiThread
+                        if (version != highlightVersion) {
+                            highlightDiag = "mid: dropped (newer pass)"
+                            return@runOnUiThread
+                        }
+                        if (docs.getOrNull(active) !== docRef) {
+                            highlightDiag = "mid: dropped (tab changed)"
+                            return@runOnUiThread
+                        }
+                        if (editor.textLength() != source.length) {
+                            highlightDiag = "mid: dropped (text changed)"
+                            return@runOnUiThread
+                        }
+                        highlightDiag = "mid: delivered ${ranges.size} ranges"
                         editor.highlightRanges = ranges
                     }
                 }
@@ -968,7 +1082,11 @@ class EditorActivity : Activity() {
             // chunk's ranges are merged in as they land.
             planChunkedHighlight(doc, source, lang, style)
         } catch (e: Exception) {
-            // Highlighting is cosmetic; never let it break editing.
+            // Highlighting is cosmetic; never let it break editing —
+            // but DO record the failure (item 67): a silent catch
+            // is how this bug survived three reports.
+            highlightDiag =
+                "threw ${e.javaClass.simpleName}: ${e.message}"
         }
     }
 
@@ -1001,6 +1119,8 @@ class EditorActivity : Activity() {
             doc, version, editCounter, source, lang, style, chunks
         )
         currentPlan = plan
+        highlightDiag =
+            "chunked: plan of ${chunks.size} chunks (${lang.id}, ${source.length} chars)"
         val cursor = editor.selectionStart
         val firstIdx = chunks.indexOfFirst { cursor < it.last + 1 }
             .let { if (it < 0) 0 else it }
@@ -1076,11 +1196,23 @@ class EditorActivity : Activity() {
                     }
                 }
                 runOnUiThread {
-                    if (plan.version != highlightVersion) return@runOnUiThread
-                    if (docs.getOrNull(active) !== plan.doc) return@runOnUiThread
-                    if (editCounter != plan.stamp) return@runOnUiThread
+                    if (plan.version != highlightVersion) {
+                        highlightDiag = "chunked: dropped (newer pass)"
+                        return@runOnUiThread
+                    }
+                    if (docs.getOrNull(active) !== plan.doc) {
+                        highlightDiag = "chunked: dropped (tab changed)"
+                        return@runOnUiThread
+                    }
+                    if (editCounter != plan.stamp) {
+                        highlightDiag = "chunked: dropped (text edited)"
+                        return@runOnUiThread
+                    }
                     plan.done.add(idx)
                     editor.applyHighlightChunk(range.first, range.last + 1, shifted)
+                    highlightDiag =
+                        "chunked: ${plan.done.size}/${plan.chunks.size} chunks, " +
+                            "${editor.highlightRanges.size} ranges"
                 }
             }
         }
@@ -1383,7 +1515,7 @@ class EditorActivity : Activity() {
             AppSettings(this).visualStyle = ids[which]
             settings = AppSettings(this)
             applyEditorStyle()
-            applyHighlighting()
+            applyHighlighting(direct = true)
         }
     }
 
@@ -1479,7 +1611,11 @@ class EditorActivity : Activity() {
         val current = ids.indexOf(doc.syntax).coerceAtLeast(0)
         CardDialogs.picker(this, palette, "Syntax", labels, current) { which ->
             doc.syntax = ids[which]
-            applyHighlighting()
+            // Item 67: an explicit pick is applied directly
+            // (synchronously up to the mid-tier cap) — the user is
+            // watching for the colours and must never be left with
+            // a silently dropped background delivery.
+            applyHighlighting(direct = true)
         }
     }
 
@@ -1733,6 +1869,10 @@ class EditorActivity : Activity() {
                     doc.uri = uri
                     doc.name = RecentFiles.displayName(this, uri)
                     doc.needsDestination = false
+                    // The doc now lives at a user-picked, writable
+                    // location (item 65): the read-only-source flag
+                    // of its previous home no longer applies.
+                    doc.readOnlySource = false
                     doc.dirty = false
                     doc.draftFile?.delete()
                     doc.draftFile = null
@@ -1999,7 +2139,8 @@ class EditorActivity : Activity() {
             this, palette, "Statistics",
             "Characters: ${text.length}\nWords: $words\nLines: $lines\n" +
                 "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel" +
-                "\nColour ranges: ${editor.highlightRanges.size}"
+                "\nColour ranges: ${editor.highlightRanges.size}" +
+                "\nHighlight: $highlightDiag"
         )
     }
 
