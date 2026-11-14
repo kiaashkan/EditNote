@@ -26,6 +26,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import com.kiaashkan.editnote.data.AppSettings
@@ -63,7 +64,16 @@ class EditorActivity : Activity() {
         /** Syntax choice: SyntaxHighlighter.AUTO, NONE, or a language id. */
         var syntax: String = SyntaxHighlighter.AUTO,
         /** Set once the "large file: wrap off" note has been shown. */
-        var largeWrapToastShown: Boolean = false
+        var largeWrapToastShown: Boolean = false,
+        /** Longest single line, measured during the background
+         *  load (item 64): one enormous line is as expensive to
+         *  wrap as a whole large file, so it triggers the same
+         *  large-file mode. 0 = not measured (drafts). */
+        var maxLine: Int = 0,
+        /** True while the background loader (item 64) is reading
+         *  this document; the editor shows a spinner and stays
+         *  read-only until the content lands. */
+        var pendingLoad: Boolean = false
     )
 
     private lateinit var settings: AppSettings
@@ -78,6 +88,37 @@ class EditorActivity : Activity() {
     private lateinit var findBar: View
     private lateinit var findField: EditText
     private lateinit var findCounter: TextView
+    private lateinit var loadProgress: ProgressBar
+
+    // Background file I/O (KiA, item 64): reads and decodes never
+    // run on the UI thread any more — that was the open-time ANR.
+    private val ioExecutor =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "editnote-io").apply { isDaemon = true }
+        }
+
+    // Highlight bookkeeping for the chunked path (item 64): every
+    // edit bumps editCounter (in-flight chunk results computed from
+    // older text are dropped on delivery) and remembers the
+    // earliest edited offset, so a re-plan only recomputes from
+    // the edited chunk onward.
+    private var editCounter = 0
+    private var lastEditStart = Int.MAX_VALUE
+
+    private class HighlightPlan(
+        val doc: Doc,
+        val version: Int,
+        /** editCounter at plan time: the snapshot in [source] is
+         *  only valid while no edit has landed since. */
+        val stamp: Int,
+        val source: String,
+        val lang: SyntaxHighlighter.Lang,
+        val style: EditorStyle,
+        val chunks: List<IntRange>,
+        val done: MutableSet<Int> = mutableSetOf()
+    )
+
+    private var currentPlan: HighlightPlan? = null
 
     private val docs = mutableListOf<Doc>()
     private var active = 0
@@ -138,6 +179,16 @@ class EditorActivity : Activity() {
     }
     private val highlightRunnable = Runnable { applyHighlighting() }
 
+    private val scrollHighlightRunnable = Runnable {
+        val plan = currentPlan ?: return@Runnable
+        if (plan.chunks.size <= HIGHLIGHT_FULL_PLAN_CHUNKS) return@Runnable
+        val len = editor.textLength()
+        val max = editor.maxScrollY()
+        if (len == 0 || max <= 0) return@Runnable
+        val approx = (editor.scrollYPos.toDouble() / max * len).toInt()
+        ensureHighlightAround(plan, approx)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
@@ -147,6 +198,8 @@ class EditorActivity : Activity() {
         appliedSignature = ThemeHelper.signature(this)
 
         editor = findViewById(R.id.editor)
+        // Assigned early: loadDocIntoEditor (below) already reads it.
+        loadProgress = findViewById(R.id.loadProgress)
         fastScroll = findViewById(R.id.fastScroll)
         fastScroll.editor = editor
         fastScroll.accentColor = palette.accent
@@ -167,6 +220,7 @@ class EditorActivity : Activity() {
         active = 0
         applyEditorSettings()
         loadDocIntoEditor(docs[0])
+        if (docs[0].pendingLoad) startLoad(docs[0])
         editor.post { refreshLineNumbers() }
         buildAccessoryBar()
         renderTabs()
@@ -182,6 +236,8 @@ class EditorActivity : Activity() {
             }
             refreshLineNumbers()
             if (!suppress) {
+                editCounter++
+                if (start < lastEditStart) lastEditStart = start
                 val doc = docs.getOrNull(active)
                 if (doc != null) {
                     doc.dirty = true
@@ -209,7 +265,14 @@ class EditorActivity : Activity() {
                 }
             }
         }
-        editor.onScrollChanged = { fastScroll.invalidate() }
+        editor.onScrollChanged = {
+            fastScroll.invalidate()
+            // Very large files highlight a window of chunks around
+            // the viewport (item 64); scrolling asks for the chunks
+            // near the new position, debounced.
+            handler.removeCallbacks(scrollHighlightRunnable)
+            handler.postDelayed(scrollHighlightRunnable, 250)
+        }
         editor.onSelectionChanged = { refreshBracketPair() }
         fastScroll.onGrab = { editor.stopFling() }
 
@@ -298,13 +361,13 @@ class EditorActivity : Activity() {
                 val uri = Uri.parse(external)
                 val name = intent.getStringExtra(EXTRA_NAME) ?: "file.txt"
                 RecentFiles(this).add(uri, name)
-                listOf(docFromUri(uri, name) ?: newDraftDoc("Untitled"))
+                listOf(pendingDoc(uri, name))
             }
             intent.data != null -> {
                 val uri = intent.data!!
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                listOf(docFromUri(uri, name) ?: newDraftDoc("Untitled"))
+                listOf(pendingDoc(uri, name))
             }
             newName != null -> listOf(newDraftDoc(newName))
             else -> listOf(newDraftDoc("Untitled"))
@@ -318,22 +381,93 @@ class EditorActivity : Activity() {
     // turned lost permissions into blank documents. All reads now
     // go through TextFileIo.read and handle failure explicitly.)
 
-    /** Null when the file cannot be read (KiA, item 61: a lost
-     *  permission used to produce an EMPTY doc bound to the URI,
-     *  which autosave could later write over the real file). */
-    private fun docFromUri(uri: Uri, name: String): Doc? {
-        val (text, usedEncoding) = try {
-            TextFileIo.read(this, uri, settings.encoding)
-        } catch (e: Exception) {
-            Toast.makeText(
-                this,
-                "Access to “$name” was lost. Open it once via Open " +
-                    "file — after that it stays in Recents.",
-                Toast.LENGTH_LONG
-            ).show()
-            return null
+    /** A document whose content the background loader will fill
+     *  in (KiA, item 64). Until then it renders as an empty,
+     *  read-only tab with a spinner — never as a blank document
+     *  bound to the URI (item 61's data-loss shape). */
+    private fun pendingDoc(uri: Uri, name: String): Doc =
+        Doc(uri = uri, name = name, text = "", encoding = settings.encoding,
+            pendingLoad = true)
+
+    /** Length of the longest single line in [text] (chars). */
+    private fun longestLine(text: String): Int {
+        var maxLine = 0
+        var run = 0
+        for (ch in text) {
+            if (ch == '\n') {
+                if (run > maxLine) maxLine = run
+                run = 0
+            } else {
+                run++
+            }
         }
-        return Doc(uri = uri, name = name, text = text, encoding = usedEncoding)
+        if (run > maxLine) maxLine = run
+        return maxLine
+    }
+
+    /** One background read: decoded text, the encoding used, and
+     *  the longest line (for large-file mode). Throws on failure;
+     *  callers run this on ioExecutor only. */
+    private fun readDocSync(uri: Uri, encoding: String): Triple<String, String, Int> {
+        val (text, usedEncoding) = TextFileIo.read(this, uri, encoding)
+        return Triple(text, usedEncoding, longestLine(text))
+    }
+
+    /**
+     * Fill [doc] from its URI in the background (KiA, item 64 —
+     * the open-time ANR: a 5,000-line file used to be read and
+     * decoded on the UI thread inside onCreate). On failure the
+     * item-61 behaviour holds: an actionable toast, and the
+     * placeholder is replaced by a draft (single tab) or removed
+     * (extra tab) — it never stays behind as an empty document
+     * that autosave could write over the real file.
+     */
+    private fun startLoad(doc: Doc) {
+        val uri = doc.uri ?: return
+        ioExecutor.execute {
+            val result = try {
+                readDocSync(uri, doc.encoding)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (result == null) {
+                    Toast.makeText(
+                        this,
+                        "Access to “${doc.name}” was lost. Open it once " +
+                            "via Open file — after that it stays in Recents.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    doc.pendingLoad = false
+                    val idx = docs.indexOf(doc)
+                    if (idx >= 0) {
+                        if (docs.size == 1) {
+                            val draft = newDraftDoc("Untitled")
+                            docs[0] = draft
+                            active = 0
+                            loadDocIntoEditor(draft)
+                        } else {
+                            docs.removeAt(idx)
+                            if (idx == active) {
+                                active = (idx - 1).coerceAtLeast(0)
+                                loadDocIntoEditor(docs[active])
+                            } else if (active > idx) {
+                                active--
+                            }
+                        }
+                        renderTabs()
+                    }
+                    return@runOnUiThread
+                }
+                doc.text = result.first
+                doc.encoding = result.second
+                doc.maxLine = result.third
+                doc.pendingLoad = false
+                doc.dirty = false
+                if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
+                renderTabs()
+            }
+        }
     }
 
     private fun stashActive() {
@@ -358,12 +492,17 @@ class EditorActivity : Activity() {
         updateUndoRedoButtons()
         titleView.text = doc.name
         when {
+            doc.pendingLoad -> statusView.text = "Loading…"
             doc.needsDestination && doc.text.isNotBlank() ->
                 statusView.text = "Draft · tap Save to choose where to keep it"
             doc.needsDestination -> statusView.text = "New file · not saved yet"
             doc.dirty -> statusView.text = "Unsaved changes"
             else -> setStatusSaved()
         }
+        // A document still loading in the background (item 64)
+        // shows the spinner and cannot be typed into yet.
+        loadProgress.visibility = if (doc.pendingLoad) View.VISIBLE else View.GONE
+        editor.readOnly = readOnly || doc.pendingLoad
         // Large-file mode (KiA, item 46; how real editors stay
         // smooth): past ~200K characters, word wrap is the single
         // most expensive layout mode a stock EditText has — every
@@ -371,7 +510,10 @@ class EditorActivity : Activity() {
         // unwrapped (horizontal scroll) even when the setting is on;
         // the Options menu can still force wrap back on for the
         // session. Small files are untouched.
-        val large = doc.text.length > LARGE_FILE_CHARS
+        // One enormous line is as expensive to wrap as a whole
+        // large file (item 64), so it triggers the same mode.
+        val large = doc.text.length > LARGE_FILE_CHARS ||
+            doc.maxLine > MAX_LINE_CHARS
         editor.wordWrap = settings.wordWrap && !large
         if (large && settings.wordWrap && !doc.largeWrapToastShown) {
             doc.largeWrapToastShown = true
@@ -786,11 +928,9 @@ class EditorActivity : Activity() {
             // JVM and his code files are a few KB; the async path's
             // version/length guards could silently swallow results
             // on-device, and colours simply never appeared for him
-            // even with a manual JavaScript pick. Large files keep
-            // the background path (item 50's freeze was the old
-            // whole-document span application on EditText, not this
-            // pure string scan).
+            // even with a manual JavaScript pick.
             if (source.length <= SYNC_HIGHLIGHT_MAX) {
+                currentPlan = null
                 editor.highlightRanges = try {
                     SyntaxHighlighter.compute(source, lang, style)
                 } catch (e: Exception) {
@@ -798,21 +938,35 @@ class EditorActivity : Activity() {
                 }
                 return
             }
-            val docRef = doc
-            val version = ++highlightVersion
-            highlightExecutor.execute {
-                val ranges = try {
-                    SyntaxHighlighter.compute(source, lang, style)
-                } catch (e: Exception) {
-                    emptyList()
+            // Mid-size files: one background scan of the whole
+            // document (the path that has shipped since item 50's
+            // freeze fix — the freeze was the old whole-document
+            // span application on EditText, not this pure scan).
+            if (source.length <= CHUNKED_HIGHLIGHT_MIN) {
+                currentPlan = null
+                val docRef = doc
+                val version = ++highlightVersion
+                highlightExecutor.execute {
+                    val ranges = try {
+                        SyntaxHighlighter.compute(source, lang, style)
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                    runOnUiThread {
+                        if (version != highlightVersion) return@runOnUiThread
+                        if (docs.getOrNull(active) !== docRef) return@runOnUiThread
+                        if (editor.textLength() != source.length) return@runOnUiThread
+                        editor.highlightRanges = ranges
+                    }
                 }
-                runOnUiThread {
-                    if (version != highlightVersion) return@runOnUiThread
-                    if (docs.getOrNull(active) !== docRef) return@runOnUiThread
-                    if (editor.textLength() != source.length) return@runOnUiThread
-                    editor.highlightRanges = ranges
-                }
+                return
             }
+            // Huge files (KiA, item 64): past the old 200K cap the
+            // highlighter used to give up entirely — a 5,000-line
+            // file got NO colours. Now the document is scanned in
+            // line-aligned chunks, viewport chunk first, and each
+            // chunk's ranges are merged in as they land.
+            planChunkedHighlight(doc, source, lang, style)
         } catch (e: Exception) {
             // Highlighting is cosmetic; never let it break editing.
         }
@@ -823,6 +977,114 @@ class EditorActivity : Activity() {
             Thread(r, "editnote-highlight").apply { isDaemon = true }
         }
     private var highlightVersion = 0
+
+    /**
+     * Progressive highlighting for huge documents (KiA, item 64).
+     * The plan snapshots the text once; chunks are scanned on the
+     * highlight executor (the chunk under the cursor first) and
+     * merged into the engine chunk by chunk. Guards mirror the
+     * mid-size path, plus an edit stamp: any edit since the plan
+     * was made drops in-flight deliveries, and the debounced
+     * re-plan then only recomputes from the edited chunk onward —
+     * ranges before it stay valid because their text did not move.
+     * For documents with more chunks than [HIGHLIGHT_FULL_PLAN_CHUNKS]
+     * only a window around the cursor is queued up front; scrolling
+     * queues more via [ensureHighlightAround].
+     */
+    private fun planChunkedHighlight(
+        doc: Doc, source: String,
+        lang: SyntaxHighlighter.Lang, style: EditorStyle
+    ) {
+        val version = ++highlightVersion
+        val chunks = SyntaxHighlighter.splitChunks(source, HIGHLIGHT_CHUNK_SIZE)
+        val plan = HighlightPlan(
+            doc, version, editCounter, source, lang, style, chunks
+        )
+        currentPlan = plan
+        val cursor = editor.selectionStart
+        val firstIdx = chunks.indexOfFirst { cursor < it.last + 1 }
+            .let { if (it < 0) 0 else it }
+        // Ranges at/after the edit point (or everywhere, for a
+        // fresh plan) are stale: drop them up front so old colours
+        // never linger at shifted offsets while chunks recompute.
+        val editStart = lastEditStart
+        lastEditStart = Int.MAX_VALUE
+        if (editStart != Int.MAX_VALUE) {
+            val from = chunks.lastOrNull { it.first <= editStart }?.first ?: 0
+            editor.applyHighlightChunk(from, source.length, emptyList())
+            // The chunks before the edit kept their ranges; mark
+            // them done so the scroll window never recomputes them.
+            for (i in chunks.indices) {
+                if (chunks[i].last + 1 <= from) plan.done.add(i)
+            }
+        } else {
+            editor.highlightRanges = emptyList()
+        }
+        val order = ArrayList<Int>()
+        if (chunks.size <= HIGHLIGHT_FULL_PLAN_CHUNKS) {
+            order.add(firstIdx)
+            for (i in chunks.indices) if (i != firstIdx) order.add(i)
+        } else {
+            val lo = (firstIdx - HIGHLIGHT_WINDOW_CHUNKS).coerceAtLeast(0)
+            val hi = (firstIdx + HIGHLIGHT_WINDOW_CHUNKS)
+                .coerceAtMost(chunks.lastIndex)
+            order.add(firstIdx)
+            for (i in lo..hi) if (i != firstIdx) order.add(i)
+        }
+        queueHighlightChunks(plan, order)
+    }
+
+    /** Queue more of [plan]'s chunks around [offset] (scrolling in
+     *  a document too large to highlight in one pass). Only while
+     *  the plan's snapshot is still the live text — after an edit,
+     *  the debounced re-plan takes over. */
+    private fun ensureHighlightAround(plan: HighlightPlan, offset: Int) {
+        if (docs.getOrNull(active) !== plan.doc) return
+        if (editCounter != plan.stamp) return
+        val center = plan.chunks.indexOfFirst { offset < it.last + 1 }
+        if (center < 0) return
+        val lo = (center - HIGHLIGHT_WINDOW_CHUNKS).coerceAtLeast(0)
+        val hi = (center + HIGHLIGHT_WINDOW_CHUNKS)
+            .coerceAtMost(plan.chunks.lastIndex)
+        val missing = (lo..hi).filter { it !in plan.done }
+        if (missing.isEmpty()) return
+        queueHighlightChunks(plan, missing)
+    }
+
+    private fun queueHighlightChunks(
+        plan: HighlightPlan, indices: List<Int>
+    ) {
+        if (indices.isEmpty()) return
+        highlightExecutor.execute {
+            for (idx in indices) {
+                if (plan.version != highlightVersion) return@execute
+                val range = plan.chunks[idx]
+                val chunkText = plan.source.substring(range.first, range.last + 1)
+                val ranges = try {
+                    SyntaxHighlighter.computeChunk(chunkText, plan.lang, plan.style)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                val offset = range.first
+                val shifted = if (offset == 0) {
+                    ranges
+                } else {
+                    ranges.map {
+                        SyntaxHighlighter.Range(
+                            it.from + offset, it.to + offset, it.color
+                        )
+                    }
+                }
+                runOnUiThread {
+                    if (plan.version != highlightVersion) return@runOnUiThread
+                    if (docs.getOrNull(active) !== plan.doc) return@runOnUiThread
+                    if (editCounter != plan.stamp) return@runOnUiThread
+                    plan.done.add(idx)
+                    editor.applyHighlightChunk(range.first, range.last + 1, shifted)
+                }
+            }
+        }
+    }
 
     /**
      * Enter handling (KiA, item 53 — real code-editor behaviour):
@@ -1154,15 +1416,43 @@ class EditorActivity : Activity() {
             return
         }
         val reread = {
-            try {
-                doc.text = com.kiaashkan.editnote.data.TextFileIo.readForced(this, uri, chosen)
-                doc.encoding = chosen
-                doc.dirty = false
-                doc.selection = 0
-                if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
-                Toast.makeText(this, "Encoding: $chosen", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Could not re-read file: ${e.message}", Toast.LENGTH_LONG).show()
+            // Background, like every other read (item 64).
+            loadProgress.visibility = View.VISIBLE
+            ioExecutor.execute {
+                var error: String? = null
+                val text = try {
+                    com.kiaashkan.editnote.data.TextFileIo
+                        .readForced(this, uri, chosen)
+                } catch (e: Exception) {
+                    error = e.message
+                    null
+                }
+                runOnUiThread {
+                    loadProgress.visibility =
+                        if (docs.getOrNull(active)?.pendingLoad == true) {
+                            View.VISIBLE
+                        } else {
+                            View.GONE
+                        }
+                    if (text == null) {
+                        Toast.makeText(
+                            this, "Could not re-read file: $error",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else {
+                        doc.text = text
+                        doc.encoding = chosen
+                        doc.maxLine = longestLine(text)
+                        doc.dirty = false
+                        doc.selection = 0
+                        if (doc === docs.getOrNull(active)) {
+                            loadDocIntoEditor(doc)
+                        }
+                        Toast.makeText(
+                            this, "Encoding: $chosen", Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
             }
         }
         if (doc.dirty) {
@@ -1213,19 +1503,39 @@ class EditorActivity : Activity() {
             // an EMPTY string — reloading a file whose access was
             // lost wiped the tab's text and marked it clean. Read
             // with a throwing call and abort on failure instead.
-            try {
-                val (reloadedText, reloadedEnc) =
-                    TextFileIo.read(this, uri, doc.encoding)
-                doc.text = reloadedText
-                doc.encoding = reloadedEnc
-                doc.dirty = false
-                doc.selection = 0
-                if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
-            } catch (e: Exception) {
-                Toast.makeText(
-                    this, "Could not reload file: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
+            // Item 64: the read itself now runs in the background.
+            loadProgress.visibility = View.VISIBLE
+            ioExecutor.execute {
+                var error: String? = null
+                val result = try {
+                    readDocSync(uri, doc.encoding)
+                } catch (e: Exception) {
+                    error = e.message
+                    null
+                }
+                runOnUiThread {
+                    loadProgress.visibility =
+                        if (docs.getOrNull(active)?.pendingLoad == true) {
+                            View.VISIBLE
+                        } else {
+                            View.GONE
+                        }
+                    if (result == null) {
+                        Toast.makeText(
+                            this, "Could not reload file: $error",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else {
+                        doc.text = result.first
+                        doc.encoding = result.second
+                        doc.maxLine = result.third
+                        doc.dirty = false
+                        doc.selection = 0
+                        if (doc === docs.getOrNull(active)) {
+                            loadDocIntoEditor(doc)
+                        }
+                    }
+                }
             }
         }
         if (doc.dirty) {
@@ -1398,7 +1708,9 @@ class EditorActivity : Activity() {
                 } catch (e: SecurityException) { /* temporary access is fine */ }
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                docFromUri(uri, name)?.let { addDoc(it) }
+                val doc = pendingDoc(uri, name)
+                addDoc(doc)
+                startLoad(doc)
             }
             REQ_SAVE_DEST, REQ_CREATE -> {
                 val doc = pendingDestinationDoc ?: docs.getOrNull(active) ?: return
@@ -1706,6 +2018,19 @@ class EditorActivity : Activity() {
         private const val LARGE_FILE_CHARS = 200_000
         private const val HIGHLIGHT_DELAY_MS = 500L
         private const val SYNC_HIGHLIGHT_MAX = 30_000
+
+        // Item 64 (100K-line scale): past this size the whole-file
+        // scan is replaced by line-aligned chunks of
+        // HIGHLIGHT_CHUNK_SIZE; plans with at most
+        // HIGHLIGHT_FULL_PLAN_CHUNKS chunks run to completion,
+        // larger ones highlight a ±HIGHLIGHT_WINDOW_CHUNKS window
+        // around the cursor/viewport. A single line longer than
+        // MAX_LINE_CHARS triggers large-file mode on its own.
+        private const val CHUNKED_HIGHLIGHT_MIN = 200_000
+        private const val HIGHLIGHT_CHUNK_SIZE = 65_536
+        private const val HIGHLIGHT_FULL_PLAN_CHUNKS = 40
+        private const val HIGHLIGHT_WINDOW_CHUNKS = 10
+        private const val MAX_LINE_CHARS = 4_000
         private const val REQ_OPEN = 2002
         private const val REQ_CREATE = 2001
         private const val REQ_SAVE_DEST = 2003

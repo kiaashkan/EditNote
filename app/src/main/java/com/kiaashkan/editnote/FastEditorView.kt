@@ -392,14 +392,65 @@ class FastEditorView @JvmOverloads constructor(
 
     /** Highlight ranges for the whole text (from the background
      *  highlighter); [highlightVersion] invalidates line layouts. */
-    var highlightRanges: List<SyntaxHighlighter.Range> = emptyList()
+    private var rangesBacking: List<SyntaxHighlighter.Range> = emptyList()
+
+    /** Whole-list replacement: clears every cached layout, because
+     *  any range may have moved. For progressive (chunked) delivery
+     *  use [applyHighlightChunk], which invalidates surgically. */
+    var highlightRanges: List<SyntaxHighlighter.Range>
+        get() = rangesBacking
         set(value) {
-            field = value
+            rangesBacking = value
             highlightVersion++
             layoutCache.clear()
             invalidate()
         }
     private var highlightVersion = 0
+
+    private fun firstRangeStartingAtOrAfter(
+        ranges: List<SyntaxHighlighter.Range>, offset: Int
+    ): Int {
+        var lo = 0
+        var hi = ranges.size
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (ranges[mid].from < offset) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+
+    /**
+     * Replace the highlight ranges inside [from, to) with [ranges]
+     * (sorted, absolute offsets, contained in the interval), keep
+     * everything outside untouched, and drop ONLY the cached
+     * layouts of lines the interval touches (KiA, item 64 — the
+     * chunked highlighter delivers one chunk at a time; clearing
+     * the whole cache per chunk made delivery itself stutter).
+     * Chunk boundaries are line-aligned, so each touched line
+     * belongs fully to this interval.
+     */
+    fun applyHighlightChunk(
+        from: Int, to: Int,
+        ranges: List<SyntaxHighlighter.Range>
+    ) {
+        val old = rangesBacking
+        val lo = firstRangeEndingAfter(old, from)
+        val hi = firstRangeStartingAtOrAfter(old, to)
+        if (lo == hi && ranges.isEmpty()) return
+        val merged =
+            ArrayList<SyntaxHighlighter.Range>(old.size - (hi - lo) + ranges.size)
+        for (i in 0 until lo) merged.add(old[i])
+        merged.addAll(ranges)
+        for (i in hi until old.size) merged.add(old[i])
+        rangesBacking = merged
+        highlightVersion++
+        if (lineCount > 0 && textLength() > 0 && to > from) {
+            val a = lineOfOffset(from.coerceIn(0, textLength()))
+            val b = lineOfOffset((to - 1).coerceIn(0, textLength()))
+            for (line in a..b) layoutCache.remove(line)
+        }
+        invalidate()
+    }
 
     /** Extra one-off spans (find highlights), same mechanism. */
     var findRanges: List<Pair<IntRange, Int>> = emptyList()

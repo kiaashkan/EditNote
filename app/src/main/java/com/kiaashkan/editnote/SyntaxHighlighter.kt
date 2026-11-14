@@ -327,6 +327,49 @@ object SyntaxHighlighter {
      */
     fun compute(source: String, lang: Lang, style: EditorStyle): List<Range> {
         if (source.isEmpty() || source.length > MAX_LENGTH) return emptyList()
+        return computeAll(source, lang, style)
+    }
+
+    /**
+     * Chunk worker for the progressive highlighter (KiA, item 64):
+     * the same scan as [compute] but WITHOUT the whole-document
+     * size cap — the caller bounds the chunk (see [splitChunks]).
+     * Chunk boundaries sit on line starts, so a string or comment
+     * spanning a boundary is coloured only as far as its own chunk
+     * can see — the standard big-file trade-off, and the reason a
+     * 100K-line file can be coloured at all (the old cap returned
+     * NO ranges past 200K chars).
+     */
+    fun computeChunk(source: String, lang: Lang, style: EditorStyle): List<Range> {
+        if (source.isEmpty()) return emptyList()
+        return computeAll(source, lang, style)
+    }
+
+    /**
+     * Split [text] into line-aligned [start, end) chunks of roughly
+     * [chunkSize] chars: a chunk ends at the first line boundary at
+     * or after start + chunkSize, so no chunk ever cuts a line in
+     * two (a single line longer than chunkSize forms its own
+     * chunk). Chunks cover the text exactly, in order.
+     */
+    fun splitChunks(text: String, chunkSize: Int): List<IntRange> {
+        if (text.isEmpty()) return emptyList()
+        val out = ArrayList<IntRange>()
+        var start = 0
+        val n = text.length
+        while (start < n) {
+            var end = minOf(n, start + chunkSize)
+            if (end < n) {
+                val nl = text.indexOf('\n', end)
+                end = if (nl < 0) n else nl + 1
+            }
+            out.add(start until end)
+            start = end
+        }
+        return out
+    }
+
+    private fun computeAll(source: String, lang: Lang, style: EditorStyle): List<Range> {
         val out = ArrayList<Range>()
         when (lang.id) {
             "html", "xml" -> markMarkup(out, source, style)
@@ -425,9 +468,13 @@ object SyntaxHighlighter {
                 lineStart = false
                 continue
             }
-            // Quoted strings / chars.
-            if (c.toString() in lang.quotes) {
-                var j = i + 1
+            // Quoted strings / chars. (Was `c.toString() in
+            // lang.quotes` — a String allocation per scanned char.)
+            val quote = lang.quotes.firstOrNull {
+                it.isNotEmpty() && it[0] == c && src.startsWith(it, i)
+            }
+            if (quote != null) {
+                var j = i + quote.length
                 var closed = false
                 while (j < n) {
                     val cj = src[j]
@@ -440,6 +487,10 @@ object SyntaxHighlighter {
                         break
                     }
                     if (cj == '\n' && c != '`') break
+                    // Bound the pathological case: an unterminated
+                    // template literal must not scan to EOF char by
+                    // char (KiA, item 64).
+                    if (c == '`' && j - i > 32_768) break
                     // Char literal heuristic: 'x' is short; a longer run
                     // without a closing quote is an apostrophe, not a char.
                     if (c == '\'' && lang.charLiteral && j - i > 4 && lang.id != "sql") break
@@ -542,8 +593,16 @@ object SyntaxHighlighter {
     private fun markJson(out: MutableList<Range>, src: String, style: EditorStyle) {
         val stringRe = Regex("\"([^\"\\\\]|\\\\.)*\"")
         stringRe.findAll(src).forEach { m ->
-            val after = src.substring(m.range.last + 1).trimStart()
-            val color = if (after.startsWith(":")) style.property else style.string
+            // Key or plain string? The next non-whitespace char
+            // decides. (Was: substring() of the whole remainder per
+            // match — O(n^2) on string-heavy JSON, KiA item 64.)
+            var k = m.range.last + 1
+            while (k < src.length && src[k].isWhitespace()) k++
+            val color = if (k < src.length && src[k] == ':') {
+                style.property
+            } else {
+                style.string
+            }
             span(out, color, m.range.first, m.range.last + 1)
         }
         Regex("\\b(-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?)\\b").findAll(src).forEach {
