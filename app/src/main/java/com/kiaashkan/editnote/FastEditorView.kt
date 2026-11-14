@@ -155,8 +155,24 @@ class FastEditorView @JvmOverloads constructor(
         val lastLine = lineOfOffset(b)
         val removedLines = lastLine - firstLine
         val charDelta = ins.length - (b - a)
+        val deltaLines = ins.count { it == '\n' } - removedLines
+        // The edited lines' measured heights are stale.
+        for (l in firstLine..lastLine) {
+            if (l < lineHeights.size) lineHeights[l] = -1
+        }
         buffer.replace(a, b, ins)
         spliceLineIndex(firstLine, removedLines, ins, a, charDelta)
+        // Cache invalidation, surgical: with no line-count change the
+        // indices do not shift, so only the edited lines lose their
+        // layouts; otherwise everything from the edit onward shifts.
+        if (deltaLines == 0) {
+            for (l in firstLine..lastLine) layoutCache.remove(l)
+        } else {
+            val it = layoutCache.keys.iterator()
+            while (it.hasNext()) {
+                if (it.next() >= firstLine) it.remove()
+            }
+        }
         // Selection follows the edit point simply: collapse to the
         // end of the inserted text (callers set selection explicitly
         // when they need something else).
@@ -164,11 +180,11 @@ class FastEditorView @JvmOverloads constructor(
         selEnd = selStart
         composingStart = -1
         composingEnd = -1
-        layoutCache.clear()
         // Heights below the edit may have shifted; re-anchor at the
         // edited line with an estimated top (the draw refines it).
         anchorLine = firstLine
         anchorY = lineTopEstimate(firstLine)
+        onSelectionChanged?.invoke()
         onTextChanged?.invoke(a, b - a, ins)
         ensureCursorVisible()
         invalidate()
@@ -360,6 +376,28 @@ class FastEditorView @JvmOverloads constructor(
             invalidate()
         }
 
+    /** Bracket-pair highlight ranges (background), same mechanism. */
+    var pairRanges: List<Pair<IntRange, Int>> = emptyList()
+        set(value) {
+            if (field != value) {
+                // Cursor moves refresh the pair constantly — only the
+                // lines holding the old/new pair lose their layouts,
+                // never the whole cache.
+                val affected = HashSet<Int>()
+                for ((r, _) in field) {
+                    affected.add(lineOfOffset(r.first))
+                    affected.add(lineOfOffset(r.last))
+                }
+                field = value
+                for ((r, _) in value) {
+                    affected.add(lineOfOffset(r.first))
+                    affected.add(lineOfOffset(r.last))
+                }
+                for (l in affected) layoutCache.remove(l)
+                invalidate()
+            }
+        }
+
     /** Foreground counterpart of [findRanges] (current match). */
     var findFgRanges: List<Pair<IntRange, Int>> = emptyList()
         set(value) {
@@ -369,6 +407,34 @@ class FastEditorView @JvmOverloads constructor(
         }
 
     private var lastLayoutAvail = -1
+
+
+    /** First index in the (sorted, non-overlapping) ranges whose end
+     *  passes [offset] — binary search, so building a line near the
+     *  end of a highlighted file no longer scans every range. */
+    private fun firstRangeEndingAfter(
+        ranges: List<SyntaxHighlighter.Range>, offset: Int
+    ): Int {
+        var lo = 0
+        var hi = ranges.size
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (ranges[mid].to <= offset) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+
+    private fun firstPairStartingAfter(
+        ranges: List<Pair<IntRange, Int>>, offset: Int
+    ): Int {
+        var lo = 0
+        var hi = ranges.size
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (ranges[mid].first.last < offset) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
 
     private fun layoutForLine(line: Int): StaticLayout {
         // The wrap width depends on the gutter width, which grows
@@ -393,55 +459,104 @@ class FastEditorView @JvmOverloads constructor(
         val start = lineStart(line)
         val end = lineEnd(line)
         val raw = buffer.substring(start, end)
-        val spanned = SpannableString(raw)
-        // Syntax ranges intersecting this line.
-        for (r in highlightRanges) {
-            if (r.to <= start) continue
-            if (r.from >= end) break
-            val a = max(r.from, start) - start
-            val b = min(r.to, end) - start
-            if (b > a) {
-                spanned.setSpan(
-                    ForegroundColorSpan(r.color), a, b,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
+        // Collect this line's spans (if any) via binary search.
+        val syntaxIdx = firstRangeEndingAfter(highlightRanges, start)
+        val hasSyntax = syntaxIdx < highlightRanges.size &&
+            highlightRanges[syntaxIdx].from < end
+        val findIdx = firstPairStartingAfter(findRanges, start)
+        val hasFind = findIdx < findRanges.size &&
+            findRanges[findIdx].first.first <= end
+        val fgIdx = firstPairStartingAfter(findFgRanges, start)
+        val hasFg = fgIdx < findFgRanges.size &&
+            findFgRanges[fgIdx].first.first <= end
+        val pairIdx = firstPairStartingAfter(pairRanges, start)
+        val hasPair = pairIdx < pairRanges.size &&
+            pairRanges[pairIdx].first.first <= end
+        val hasComposing = composingStart >= 0 &&
+            composingStart < end && composingEnd > start
+        // Fast path: no spans touch this line — lay out the raw
+        // string directly, skipping the SpannableString entirely.
+        val text: CharSequence = if (!hasSyntax && !hasFind && !hasFg && !hasPair && !hasComposing) {
+            raw
+        } else {
+            val spanned = SpannableString(raw)
+            if (hasSyntax) {
+                var i = syntaxIdx
+                while (i < highlightRanges.size) {
+                    val r = highlightRanges[i]
+                    if (r.from >= end) break
+                    val a = max(r.from, start) - start
+                    val b = min(r.to, end) - start
+                    if (b > a) {
+                        spanned.setSpan(
+                            ForegroundColorSpan(r.color), a, b,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                    i++
+                }
             }
-        }
-        for ((range, color) in findRanges) {
-            if (range.last < start) continue
-            if (range.first > end) break
-            val a = max(range.first, start) - start
-            val b = min(range.last + 1, end) - start
-            if (b > a) {
-                spanned.setSpan(
-                    BackgroundColorSpan(color), a, b,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
+            if (hasFind) {
+                var i = findIdx
+                while (i < findRanges.size) {
+                    val (range, color) = findRanges[i]
+                    if (range.first > end) break
+                    val a = max(range.first, start) - start
+                    val b = min(range.last + 1, end) - start
+                    if (b > a) {
+                        spanned.setSpan(
+                            BackgroundColorSpan(color), a, b,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                    i++
+                }
             }
-        }
-        for ((range, color) in findFgRanges) {
-            if (range.last < start) continue
-            if (range.first > end) break
-            val a = max(range.first, start) - start
-            val b = min(range.last + 1, end) - start
-            if (b > a) {
-                spanned.setSpan(
-                    ForegroundColorSpan(color), a, b,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
+            if (hasFg) {
+                var i = fgIdx
+                while (i < findFgRanges.size) {
+                    val (range, color) = findFgRanges[i]
+                    if (range.first > end) break
+                    val a = max(range.first, start) - start
+                    val b = min(range.last + 1, end) - start
+                    if (b > a) {
+                        spanned.setSpan(
+                            ForegroundColorSpan(color), a, b,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                    i++
+                }
             }
-        }
-        if (composingStart >= 0) {
-            val a = max(composingStart, start) - start
-            val b = min(composingEnd, end) - start
-            if (b > a && a >= 0) {
-                spanned.setSpan(
-                    UnderlineSpan(), a, b, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
+            if (hasPair) {
+                var i = pairIdx
+                while (i < pairRanges.size) {
+                    val (range, color) = pairRanges[i]
+                    if (range.first > end) break
+                    val a = max(range.first, start) - start
+                    val b = min(range.last + 1, end) - start
+                    if (b > a) {
+                        spanned.setSpan(
+                            BackgroundColorSpan(color), a, b,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                    i++
+                }
             }
+            if (hasComposing) {
+                val a = max(composingStart, start) - start
+                val b = min(composingEnd, end) - start
+                if (b > a && a >= 0) {
+                    spanned.setSpan(
+                        UnderlineSpan(), a, b, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+            spanned
         }
         val layout = StaticLayout.Builder
-            .obtain(spanned, 0, spanned.length, textPaint, availNow)
+            .obtain(text, 0, text.length, textPaint, availNow)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(lineSpacingAddPx, lineSpacingMult)
             .setIncludePad(false)
@@ -660,6 +775,7 @@ class FastEditorView @JvmOverloads constructor(
             canvas.drawRect(0f, 0f, gutterW.toFloat(), height.toFloat(), fillPaint)
         }
         val (firstLine, firstTop) = firstVisibleLine()
+        val cursorLine = if (isFocused) lineOfOffset(selEnd) else -1
         var y = firstTop - scrollYPos + paddingTop
         var line = firstLine
         val textLeft = gutterW + paddingLeft - scrollXPos
@@ -695,7 +811,7 @@ class FastEditorView @JvmOverloads constructor(
             // Cursor + selection handles are drawn inside the loop
             // so their coordinates come from the same measured pass
             // as the text (no separate position walk).
-            if (isFocused && line == lineOfOffset(selEnd)) {
+            if (isFocused && line == cursorLine) {
                 val local = selEnd - start
                 val row = layout.getLineForOffset(local)
                 val x = textLeft + layout.getPrimaryHorizontal(local)
@@ -718,6 +834,37 @@ class FastEditorView @JvmOverloads constructor(
             }
             y += layout.height
             line++
+        }
+        prefetchAhead(firstLine, line)
+    }
+
+    // Prefetch: while the drawn frame is on screen, lay out the next
+    // screenful in the scroll direction so upcoming fling frames hit
+    // the cache instead of paying layout costs mid-flight.
+    private var lastDrawnFirstLine = 0
+    private var prefetchPosted = false
+
+    private fun prefetchAhead(firstLine: Int, lastLine: Int) {
+        val direction = when {
+            firstLine > lastDrawnFirstLine -> 1
+            firstLine < lastDrawnFirstLine -> -1
+            else -> 0
+        }
+        lastDrawnFirstLine = firstLine
+        if (direction == 0 || prefetchPosted) return
+        prefetchPosted = true
+        val from = if (direction > 0) lastLine else firstLine - 1
+        val token = scrollYPos
+        post {
+            prefetchPosted = false
+            // Abandon if the user has scrolled far meanwhile.
+            if (kotlin.math.abs(scrollYPos - token) > height * 3) return@post
+            var line = from
+            var budget = 60
+            while (budget-- > 0 && line in 0 until lineCount) {
+                layoutForLine(line)
+                line += direction
+            }
         }
     }
 
@@ -900,9 +1047,13 @@ class FastEditorView @JvmOverloads constructor(
             ): Boolean {
                 val maxY = maxScrollY()
                 if (maxY > 0) {
+                    // KiA wants travel FAST: feed the fling 1.3x the
+                    // finger's velocity. The engine's per-frame cost
+                    // is bounded (visible lines only), so it can take
+                    // the speed.
                     scroller.fling(
                         scrollXPos, scrollYPos,
-                        -velocityX.toInt(), -velocityY.toInt(),
+                        (-velocityX * 1.3f).toInt(), (-velocityY * 1.3f).toInt(),
                         0, maxScrollX(), 0, maxY
                     )
                     invalidate()
@@ -995,6 +1146,146 @@ class FastEditorView @JvmOverloads constructor(
             if (abs(x - hx) <= r && abs(y - hy) <= r + 10 * density) return which
         }
         return 0
+    }
+
+    // ------------------------------------------------------------------
+    // Coding behaviours (KiA, item 53): auto-close brackets/quotes,
+    // type-over closers, pair-aware backspace, wrap selection. Only
+    // active when the activity says the document is code
+    // ([codeBehaviors]) — plain notes and Persian text never pair.
+    // ------------------------------------------------------------------
+    var codeBehaviors: Boolean = false
+
+    private val closers = mapOf(
+        '(' to ')', '[' to ']', '{' to '}',
+        '"' to '"', '\'' to '\'', '`' to '`'
+    )
+    private val closerChars = setOf(')', ']', '}', '"', '\'', '`')
+
+    private fun charBefore(pos: Int): Char? =
+        if (pos > 0) buffer[pos - 1] else null
+
+    private fun charAt(pos: Int): Char? =
+        if (pos < buffer.length) buffer[pos] else null
+
+    private fun shouldPair(opener: Char, pos: Int): Boolean {
+        val next = charAt(pos)
+        if (next != null && (next.isLetterOrDigit() || next == '_')) return false
+        if (opener == '"' || opener == '\'' || opener == '`') {
+            val prev = charBefore(pos)
+            if (prev != null && (prev.isLetterOrDigit() || prev == '_')) return false
+        }
+        return true
+    }
+
+    /** Route for everything the user TYPES (IME commits, key events). */
+    fun typeText(text: String) {
+        if (readOnly) return
+        if (!codeBehaviors || text.isEmpty()) {
+            replaceRange(selectionStart, selectionEnd, text)
+            return
+        }
+        val a = selectionStart
+        val b = selectionEnd
+        if (a != b) {
+            // Typing an opener over a selection wraps it in the pair.
+            if (text.length == 1 && closers.containsKey(text[0])) {
+                val open = text[0]
+                val close = closers.getValue(open)
+                val inner = buffer.substring(a, b)
+                replaceRange(a, b, "$open$inner$close")
+                setSelection(a + 1, a + 1 + inner.length)
+                return
+            }
+            replaceRange(a, b, text)
+            return
+        }
+        if (text.length == 1) {
+            val c = text[0]
+            // Type-over: closing over an identical existing closer.
+            if (c in closerChars && charAt(a) == c) {
+                setSelection(a + 1)
+                ensureCursorVisible()
+                return
+            }
+            val close = closers[c]
+            if (close != null && shouldPair(c, a)) {
+                replaceRange(a, a, "$c$close")
+                setSelection(a + 1)
+                return
+            }
+        }
+        replaceRange(a, b, text)
+    }
+
+    /**
+     * If [cursor] touches a bracket, return (anchor, match) offsets
+     * of the pair — a bounded depth scan over the buffer (no copy).
+     * Brackets inside strings/comments are not skipped (v1).
+     */
+    fun bracketMatchAt(cursor: Int): Pair<Int, Int>? {
+        val pairs = mapOf(
+            '(' to ')', '[' to ']', '{' to '}',
+            ')' to '(', ']' to '[', '}' to '{'
+        )
+        var at = -1
+        var ch: Char? = null
+        if (cursor > 0 && pairs.containsKey(buffer[cursor - 1])) {
+            at = cursor - 1
+            ch = buffer[cursor - 1]
+        } else if (cursor < buffer.length && pairs.containsKey(buffer[cursor])) {
+            at = cursor
+            ch = buffer[cursor]
+        }
+        if (at < 0 || ch == null) return null
+        val target = pairs.getValue(ch)
+        val limit = 20_000
+        var depth = 0
+        var match = -1
+        if (ch == '(' || ch == '[' || ch == '{') {
+            var i = at
+            val end = minOf(buffer.length, at + limit)
+            while (i < end) {
+                val c = buffer[i]
+                if (c == ch) depth++
+                else if (c == target) {
+                    depth--
+                    if (depth == 0) { match = i; break }
+                }
+                i++
+            }
+        } else {
+            var i = at
+            val startAt = maxOf(0, at - limit)
+            while (i >= startAt) {
+                val c = buffer[i]
+                if (c == ch) depth++
+                else if (c == target) {
+                    depth--
+                    if (depth == 0) { match = i; break }
+                }
+                i--
+            }
+        }
+        return if (match >= 0) at to match else null
+    }
+
+    /** Backspace that removes both halves of an empty pair. */
+    fun deleteBackward() {
+        if (readOnly) return
+        if (selStart != selEnd) {
+            replaceRange(selectionStart, selectionEnd, "")
+            return
+        }
+        val pos = selEnd
+        if (pos == 0) return
+        val prev = buffer[pos - 1]
+        val next = charAt(pos)
+        if (next != null && closers[prev] == next) {
+            replaceRange(pos - 1, pos + 1, "")
+        } else {
+            replaceRange(pos - 1, pos, "")
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1099,9 +1390,11 @@ class FastEditorView @JvmOverloads constructor(
             override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
                 if (readOnly) return true
                 val ins = text.toString()
-                val a = if (composingStart >= 0) composingStart else selectionStart
-                val b = if (composingStart >= 0) composingEnd else selectionEnd
-                replaceRange(a, b, ins)
+                if (composingStart >= 0) {
+                    replaceRange(composingStart, composingEnd, ins)
+                } else {
+                    typeText(ins)
+                }
                 return true
             }
 
@@ -1138,6 +1431,10 @@ class FastEditorView @JvmOverloads constructor(
                     replaceRange(selectionStart, selectionEnd, "")
                     return true
                 }
+                if (codeBehaviors && beforeLength == 1 && afterLength == 0) {
+                    deleteBackward()
+                    return true
+                }
                 val cursor = selEnd
                 val a = (cursor - beforeLength).coerceAtLeast(0)
                 val b = (cursor + afterLength).coerceAtMost(buffer.length)
@@ -1172,7 +1469,7 @@ class FastEditorView @JvmOverloads constructor(
                 if (event.action == KeyEvent.ACTION_DOWN) {
                     when (event.keyCode) {
                         KeyEvent.KEYCODE_DEL -> {
-                            deleteSurroundingText(1, 0)
+                            deleteBackward()
                             return true
                         }
                         KeyEvent.KEYCODE_FORWARD_DEL -> {
@@ -1201,10 +1498,7 @@ class FastEditorView @JvmOverloads constructor(
         if (readOnly) return super.onKeyDown(keyCode, event)
         when (keyCode) {
             KeyEvent.KEYCODE_DEL -> {
-                if (selStart != selEnd) replaceRange(selectionStart, selectionEnd, "")
-                else if (selStart > 0) {
-                    replaceRange(selStart - 1, selStart, "")
-                }
+                deleteBackward()
                 return true
             }
             KeyEvent.KEYCODE_FORWARD_DEL -> {
@@ -1236,10 +1530,7 @@ class FastEditorView @JvmOverloads constructor(
             }
         }
         if (event.unicodeChar != 0 && !event.isCtrlPressed) {
-            replaceRange(
-                selectionStart, selectionEnd,
-                event.unicodeChar.toChar().toString()
-            )
+            typeText(event.unicodeChar.toChar().toString())
             return true
         }
         return super.onKeyDown(keyCode, event)

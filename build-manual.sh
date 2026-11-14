@@ -13,7 +13,7 @@ APP_DIR="$PROJECT_DIR/app/src/main"
 BUILD_DIR="$PROJECT_DIR/app/build/manual"
 BT="$ANDROID_HOME/build-tools/34.0.0"
 AJAR="$ANDROID_HOME/platforms/android-34/android.jar"
-OUT_APK="$PROJECT_DIR/app/build/EditNote-1.3.5.apk"
+OUT_APK="$PROJECT_DIR/app/build/EditNote-1.3.6.apk"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/gen" "$BUILD_DIR/classes" "$BUILD_DIR/dex"
@@ -47,7 +47,7 @@ sed 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<ma
   --manifest "$BUILD_DIR/AndroidManifest.xml" \
   --java "$BUILD_DIR/gen" \
   --min-sdk-version 26 --target-sdk-version 34 \
-  --version-code 11 --version-name 1.3.5 \
+  --version-code 12 --version-name 1.3.6 \
   "$BUILD_DIR/resources.zip"
 
 # Kotlin + the generated R class, against android.jar only.

@@ -210,6 +210,7 @@ class EditorActivity : Activity() {
             }
         }
         editor.onScrollChanged = { fastScroll.invalidate() }
+        editor.onSelectionChanged = { refreshBracketPair() }
         fastScroll.onGrab = { editor.stopFling() }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finishWithSave() }
@@ -729,13 +730,18 @@ class EditorActivity : Activity() {
         try {
             if (!settings.syntaxHighlight) {
                 editor.highlightRanges = emptyList()
+                editor.codeBehaviors = false
+                editor.pairRanges = emptyList()
                 return
             }
             val lang = SyntaxHighlighter.resolve(doc.syntax, doc.name)
             if (lang == null) {
                 editor.highlightRanges = emptyList()
+                editor.codeBehaviors = false
+                editor.pairRanges = emptyList()
                 return
             }
+            editor.codeBehaviors = true
             val style = currentStyle() ?: EditorStyle(
                 id = EditorStyles.DEFAULT_ID, name = "Default",
                 background = palette.surface, foreground = palette.textPrimary,
@@ -779,25 +785,72 @@ class EditorActivity : Activity() {
         }
     private var highlightVersion = 0
 
-    /** After Enter, copy the indentation of the line that was just ended. */
+    /**
+     * Enter handling (KiA, item 53 — real code-editor behaviour):
+     * keep the previous line's indentation; after an opening brace
+     * add one level; when Enter is pressed between a brace pair
+     * ({|}), split into three lines with the closer back at the
+     * base indent and the cursor on the middle line.
+     */
     private fun applyAutoIndent(newlineIndex: Int) {
         val text = editor.textString()
+        if (newlineIndex !in 0 until text.length) return
         var lineStart = newlineIndex - 1
         while (lineStart >= 0 && text[lineStart] != '\n') lineStart--
         lineStart++
-        val indent = StringBuilder()
-        var i = lineStart
-        while (i < newlineIndex && (text[i] == ' ' || text[i] == '\t')) {
-            indent.append(text[i])
-            i++
+        val prevLine = text.substring(lineStart, newlineIndex)
+        val baseIndent = prevLine.takeWhile { it == ' ' || it == '\t' }
+        val lastChar = prevLine.trimEnd().lastOrNull()
+        val unit = settings.indentUnit()
+        val extra = if (editor.codeBehaviors &&
+            (lastChar == '{' || lastChar == '[' || lastChar == '(')
+        ) unit else ""
+        if (baseIndent.isEmpty() && extra.isEmpty()) return
+        val restStart = newlineIndex + 1
+        var restEnd = text.indexOf('\n', restStart)
+        if (restEnd < 0) restEnd = text.length
+        val rest = text.substring(restStart, restEnd)
+        val firstRest = rest.firstOrNull { it != ' ' && it != '\t' }
+        val matchingCloser = when (lastChar) {
+            '{' -> '}'
+            '[' -> ']'
+            '(' -> ')'
+            else -> null
         }
-        if (indent.isEmpty()) return
         applyingIndent = true
         try {
-            editor.replaceRange(newlineIndex + 1, newlineIndex + 1, indent.toString())
+            if (extra.isNotEmpty() && matchingCloser != null &&
+                firstRest == matchingCloser
+            ) {
+                val insert = baseIndent + extra + "\n" + baseIndent
+                editor.replaceRange(restStart, restStart, insert)
+                editor.setSelection(restStart + baseIndent.length + extra.length)
+            } else {
+                val insert = baseIndent + extra
+                if (insert.isEmpty()) return
+                editor.replaceRange(restStart, restStart, insert)
+                editor.setSelection(restStart + insert.length)
+            }
         } finally {
             applyingIndent = false
         }
+    }
+
+    /** Bracket-pair highlight (KiA, item 53), via the engine scan. */
+    private fun refreshBracketPair() {
+        if (!editor.codeBehaviors || editor.selectionStart != editor.selectionEnd) {
+            if (editor.pairRanges.isNotEmpty()) editor.pairRanges = emptyList()
+            return
+        }
+        val found = editor.bracketMatchAt(editor.selectionStart)
+        if (found == null) {
+            if (editor.pairRanges.isNotEmpty()) editor.pairRanges = emptyList()
+            return
+        }
+        val (at, match) = found
+        val color = (palette.accent and 0x00FFFFFF) or 0x55000000
+        val ranges = listOf((at..at) to color, (match..match) to color)
+        if (editor.pairRanges != ranges) editor.pairRanges = ranges
     }
 
     // --- Accessory (symbol) bar ----------------------------------------------------------
