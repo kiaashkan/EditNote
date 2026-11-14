@@ -5,3 +5,7 @@ debug.keystore
 app/build/
 build/
 .idea/
+
+# Signing material must NEVER be committed (keys live outside this repo)
+*.keystore
+*.jks
