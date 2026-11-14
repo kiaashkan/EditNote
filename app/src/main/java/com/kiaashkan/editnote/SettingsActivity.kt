@@ -275,24 +275,87 @@ class SettingsActivity : Activity() {
         bindCheck(R.id.checkResume, settings.resumeSession) { settings.resumeSession = it }
     }
 
-    /** Single-choice list for the value rows (KiA, item 27: tapping a
-     *  row must open a list to choose from, not cycle one step at a
-     *  time). Same picker style as the editor's own lists. */
+    /** Single-choice list for the value rows (KiA, items 27+32: a list,
+     *  not cycling — and in a modern card window like the rest of the
+     *  app, not the stock dialog). Current choice carries an accent ✓;
+     *  tapping outside or Back dismisses. */
     private fun showPicker(
         title: String,
         options: List<String>,
         current: Int,
         onPick: (Int) -> Unit
     ) {
-        android.app.AlertDialog.Builder(this)
-            .setTitle(title)
-            .setSingleChoiceItems(options.toTypedArray(), current) { dialog, which ->
-                onPick(which)
-                dialog.dismiss()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val dialog = android.app.Dialog(this)
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        options.forEachIndexed { index, label ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                val ripple = android.util.TypedValue()
+                theme.resolveAttribute(
+                    android.R.attr.selectableItemBackground, ripple, true
+                )
+                setBackgroundResource(ripple.resourceId)
+                setPadding(dp(18), dp(12), dp(18), dp(12))
+                addView(TextView(this@SettingsActivity).apply {
+                    text = label
+                    textSize = 15.5f
+                    setTextColor(palette.textPrimary)
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                })
+                addView(TextView(this@SettingsActivity).apply {
+                    text = if (index == current) "✓" else ""
+                    textSize = 16f
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setTextColor(palette.accent)
+                })
+                setOnClickListener {
+                    dialog.dismiss()
+                    onPick(index)
+                }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            list.addView(row)
+        }
+        val scroll = android.widget.ScrollView(this).apply {
+            addView(list)
+            // Long lists (the 10 encodings) scroll inside the card.
+            val cap = (resources.displayMetrics.heightPixels * 0.62).toInt()
+            post {
+                if (height > cap) {
+                    layoutParams = layoutParams.apply { height = cap }
+                }
+            }
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = palette.cardDrawable(20f, density)
+            setPadding(0, dp(16), 0, dp(8))
+            addView(TextView(this@SettingsActivity).apply {
+                text = title
+                textSize = 17f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(palette.textPrimary)
+                setPadding(dp(18), 0, dp(18), dp(8))
+            })
+            addView(scroll)
+        }
+        dialog.setContentView(card)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.88).toInt(),
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
+        dialog.show()
     }
+
 
     private fun bindCheck(id: Int, initial: Boolean, save: (Boolean) -> Unit) {
         val box = findViewById<android.widget.CompoundButton>(id)

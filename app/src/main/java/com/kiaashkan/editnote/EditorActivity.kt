@@ -67,6 +67,7 @@ class EditorActivity : Activity() {
     private lateinit var editor: EditText
     private lateinit var lineNumbers: LineNumbersView
     private lateinit var gutter: View
+    private lateinit var fastScroll: FastScrollHandle
     private lateinit var titleView: TextView
     private lateinit var statusView: TextView
     private lateinit var tabStrip: LinearLayout
@@ -89,6 +90,14 @@ class EditorActivity : Activity() {
     private val undoStack = ArrayDeque<String>()
     private val redoStack = ArrayDeque<String>()
     private var baseline: String = ""
+    // Undo history holds FULL-TEXT snapshots. In a long file those are
+    // megabytes each; an unbounded stack (it was 100 snapshots) plus a
+    // full-text copy on every keystroke made the whole app — scrolling
+    // included — stutter from GC pressure (KiA, item 33). Snapshots now
+    // live under a total-size budget, and "is there anything to undo"
+    // is an O(1) flag instead of a whole-text comparison.
+    private var undoSnapshotChars = 0
+    private var editedSinceBaseline = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val autosaveRunnable = Runnable {
@@ -103,11 +112,22 @@ class EditorActivity : Activity() {
     private val historyRunnable = Runnable {
         val current = editor.text.toString()
         if (current != baseline) {
-            undoStack.addLast(baseline)
-            if (undoStack.size > 100) undoStack.removeFirst()
+            pushUndoSnapshot(baseline)
             redoStack.clear()
             baseline = current
+            editedSinceBaseline = false
             updateUndoRedoButtons()
+        }
+    }
+
+    private fun pushUndoSnapshot(snapshot: String) {
+        undoStack.addLast(snapshot)
+        undoSnapshotChars += snapshot.length
+        val budget = 4_000_000
+        while (undoStack.size > 1 &&
+            (undoStack.size > 100 || undoSnapshotChars > budget)
+        ) {
+            undoSnapshotChars -= undoStack.removeFirst().length
         }
     }
     private val highlightRunnable = Runnable { applyHighlighting() }
@@ -123,6 +143,9 @@ class EditorActivity : Activity() {
         editor = findViewById(R.id.editor)
         lineNumbers = findViewById(R.id.lineNumbers)
         lineNumbers.editor = editor
+        fastScroll = findViewById(R.id.fastScroll)
+        fastScroll.editor = editor
+        fastScroll.accentColor = palette.accent
         gutter = findViewById(R.id.gutterFrame)
         titleView = findViewById(R.id.fileTitle)
         statusView = findViewById(R.id.saveStatus)
@@ -149,6 +172,7 @@ class EditorActivity : Activity() {
                 if (suppress) return
                 val doc = docs.getOrNull(active) ?: return
                 doc.dirty = true
+                editedSinceBaseline = true
                 lastFindIndex = -1
                 if (!doc.needsDestination) statusView.text = "Unsaved changes"
                 handler.removeCallbacks(historyRunnable)
@@ -164,6 +188,9 @@ class EditorActivity : Activity() {
                 handler.postDelayed(highlightRunnable, HIGHLIGHT_DELAY_MS)
                 updateUndoRedoButtons()
                 renderTabs()
+                if (::findBar.isInitialized && findBar.visibility == View.VISIBLE) {
+                    refreshFindCounter()
+                }
             }
 
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -175,8 +202,9 @@ class EditorActivity : Activity() {
                 }
             }
         })
-        editor.viewTreeObserver.addOnScrollChangedListener {
+        editor.setOnScrollChangeListener { _, _, _, _, _ ->
             lineNumbers.invalidate()
+            fastScroll.invalidate()
         }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finishWithSave() }
@@ -235,7 +263,7 @@ class EditorActivity : Activity() {
     @Deprecated("Back may undo (setting) or leave after saving.")
     override fun onBackPressed() {
         if (AppSettings(this).undoByBack &&
-            (undoStack.isNotEmpty() || editor.text.toString() != baseline)
+            (undoStack.isNotEmpty() || editedSinceBaseline)
         ) {
             undo()
         } else {
@@ -349,6 +377,8 @@ class EditorActivity : Activity() {
         suppress = false
         baseline = doc.text
         undoStack.clear()
+        undoSnapshotChars = 0
+        editedSinceBaseline = false
         redoStack.clear()
         updateUndoRedoButtons()
         titleView.text = doc.name
@@ -608,6 +638,7 @@ class EditorActivity : Activity() {
         editor.setSelection(editor.text.length)
         suppress = false
         baseline = text
+        editedSinceBaseline = false
         docs.getOrNull(active)?.let {
             it.text = text
             it.dirty = true
@@ -637,13 +668,13 @@ class EditorActivity : Activity() {
 
     private fun redo() {
         if (redoStack.isEmpty()) return
-        undoStack.addLast(editor.text.toString())
+        pushUndoSnapshot(editor.text.toString())
         applyText(redoStack.removeLast())
     }
 
     private fun updateUndoRedoButtons() {
         val undoBtn = findViewById<ImageButton>(R.id.btnUndo) ?: return
-        val canUndo = undoStack.isNotEmpty() || editor.text.toString() != baseline
+        val canUndo = undoStack.isNotEmpty() || editedSinceBaseline
         undoBtn.isEnabled = canUndo
         undoBtn.alpha = if (canUndo) 1f else 0.35f
         val redoBtn = findViewById<ImageButton>(R.id.btnRedo) ?: return
@@ -1307,7 +1338,53 @@ class EditorActivity : Activity() {
 
     private fun hideFindBar() {
         findBar.visibility = View.GONE
+        clearFindHighlights()
         editor.requestFocus()
+    }
+
+    // Find highlights (KiA, item 31): every match gets a soft accent
+    // background and the current match a solid one, so the found word
+    // is visible at a glance instead of making the user hunt for a
+    // bare selection. BackgroundColorSpans only — the syntax
+    // highlighter never touches those.
+    private val findSpans = mutableListOf<Any>()
+
+    private fun clearFindHighlights() {
+        val text = editor.text ?: return
+        findSpans.forEach { text.removeSpan(it) }
+        findSpans.clear()
+    }
+
+    private fun applyFindHighlights() {
+        clearFindHighlights()
+        if (!::findBar.isInitialized || findBar.visibility != View.VISIBLE) return
+        if (lastQuery.isEmpty()) return
+        val text = editor.text ?: return
+        val soft = android.graphics.Color.argb(
+            90,
+            android.graphics.Color.red(palette.accent),
+            android.graphics.Color.green(palette.accent),
+            android.graphics.Color.blue(palette.accent)
+        )
+        for (idx in matchOffsets().take(500)) {
+            val current = idx == lastFindIndex
+            val bg = android.text.style.BackgroundColorSpan(
+                if (current) palette.accent else soft
+            )
+            text.setSpan(
+                bg, idx, idx + lastQuery.length,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            findSpans.add(bg)
+            if (current) {
+                val fg = android.text.style.ForegroundColorSpan(palette.onAccent)
+                text.setSpan(
+                    fg, idx, idx + lastQuery.length,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                findSpans.add(fg)
+            }
+        }
     }
 
     /** All match start offsets for the current query (case-insensitive). */
@@ -1330,11 +1407,13 @@ class EditorActivity : Activity() {
         if (!::findCounter.isInitialized) return
         if (lastQuery.isEmpty()) {
             findCounter.text = ""
+            clearFindHighlights()
             return
         }
         val matches = matchOffsets()
         if (matches.isEmpty()) {
             findCounter.text = "0/0"
+            clearFindHighlights()
             return
         }
         val current = matches.indexOf(lastFindIndex)
@@ -1343,6 +1422,7 @@ class EditorActivity : Activity() {
         } else {
             "${matches.size}"
         }
+        applyFindHighlights()
     }
 
     /** Select the match at [idx] AND scroll the document so it is
