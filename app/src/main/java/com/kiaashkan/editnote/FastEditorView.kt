@@ -262,10 +262,18 @@ class FastEditorView @JvmOverloads constructor(
 
     fun setSelection(a: Int, b: Int = a) {
         val len = buffer.length
+        val wasEmpty = selStart == selEnd
         selStart = a.coerceIn(0, len)
         selEnd = b.coerceIn(0, len)
         restartCursorBlink()
         onSelectionChanged?.invoke()
+        // KiA, item 56: the floating menu is built for the selection
+        // state at open time; when the state flips (e.g. Select all
+        // turns an empty selection into a full one) the menu must be
+        // rebuilt or Copy/Cut never appear.
+        if (actionMode != null && wasEmpty != (selStart == selEnd)) {
+            actionMode?.invalidate()
+        }
         invalidate()
     }
 
@@ -296,7 +304,7 @@ class FastEditorView @JvmOverloads constructor(
             if (field != value) {
                 field = value
                 if (!value) scrollXPos = 0
-                layoutCache.clear()
+                resetLayoutState()
                 invalidate()
             }
         }
@@ -307,11 +315,28 @@ class FastEditorView @JvmOverloads constructor(
     private var lineSpacingAddPx: Float = 0f
     private var lineSpacingMult: Float = 1f
 
+
+    /**
+     * Every cached layout AND every recorded line height is stale
+     * (KiA, item 57): wrap, text size, typeface and line spacing all
+     * change line heights, and a stale height left in the array
+     * poisons the anchor math - lines draw overlapped, bunched or
+     * off-screen. All appearance changes funnel through here.
+     */
+    private fun resetLayoutState() {
+        layoutCache.clear()
+        for (i in lineHeights.indices) lineHeights[i] = -1
+        measuredSum = 0
+        measuredCount = 0
+        anchorLine = 0
+        anchorY = 0
+    }
+
     fun setTextSizePx(px: Float) {
         textPaint.textSize = px
         gutterPaint.textSize = px
         lineHeightEstimate = computeLineHeight()
-        layoutCache.clear()
+        resetLayoutState()
         invalidate()
     }
 
@@ -319,7 +344,7 @@ class FastEditorView @JvmOverloads constructor(
         textPaint.typeface = tf
         gutterPaint.typeface = tf
         lineHeightEstimate = computeLineHeight()
-        layoutCache.clear()
+        resetLayoutState()
         invalidate()
     }
 
@@ -327,7 +352,7 @@ class FastEditorView @JvmOverloads constructor(
         lineSpacingAddPx = addPx
         lineSpacingMult = mult
         lineHeightEstimate = computeLineHeight()
-        layoutCache.clear()
+        resetLayoutState()
         invalidate()
     }
 
@@ -446,13 +471,8 @@ class FastEditorView @JvmOverloads constructor(
         } else {
             Int.MAX_VALUE / 2
         }
-        if (lastLayoutAvail != -1 && availNow != lastLayoutAvail &&
-            layoutCache.isNotEmpty()
-        ) {
-            layoutCache.clear()
-            for (i in lineHeights.indices) lineHeights[i] = -1
-            measuredSum = 0
-            measuredCount = 0
+        if (lastLayoutAvail != -1 && availNow != lastLayoutAvail) {
+            resetLayoutState()
         }
         lastLayoutAvail = availNow
         layoutCache[line]?.let { return it }
@@ -562,11 +582,14 @@ class FastEditorView @JvmOverloads constructor(
             .setIncludePad(false)
             .build()
         layoutCache[line] = layout
-        if (lineHeights[line] < 0) {
-            lineHeights[line] = layout.height
+        val prevH = lineHeights[line]
+        if (prevH < 0) {
             measuredSum += layout.height
             measuredCount++
+        } else if (prevH != layout.height) {
+            measuredSum += (layout.height - prevH)
         }
+        lineHeights[line] = layout.height
         return layout
     }
 
@@ -756,6 +779,14 @@ class FastEditorView @JvmOverloads constructor(
             line = (lineCount - 1).coerceAtLeast(0)
             y = lineTopEstimate(line)
         }
+        // Invariant (KiA, item 55): the top of line 0 IS y=0. The
+        // walk above measures real heights, but it starts from an
+        // anchor whose Y may be an estimate (set after edits and
+        // far jumps); when the estimate overshoots, the walk reaches
+        // line 0 with y still positive and the whole document draws
+        // that many px too low — the "empty space at the top, lines
+        // shifted down" he saw after pasting into wrapped text.
+        if (line == 0) y = 0
         anchorLine = line
         anchorY = y
         return line to y

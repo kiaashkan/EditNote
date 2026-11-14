@@ -243,6 +243,71 @@ object SyntaxHighlighter {
 
     fun languageById(id: String): Lang? = BY_ID[id]
 
+    /**
+     * Content sniffing for files whose name says nothing (KiA,
+     * item 54): he pasted JavaScript into a new "5.txt" and
+     * QuickEdit coloured it while EditNote — extension-only —
+     * showed plain text. Weighted marker scores over the first
+     * 6,000 chars; deliberately conservative so prose stays plain.
+     * Returns null when nothing clears the bar.
+     */
+    fun detect(source: String): Lang? {
+        val sample = source.take(6000)
+        if (sample.isBlank()) return null
+        if (sample.contains("<?php")) return BY_ID["php"]
+        if (sample.contains("<?xml")) return BY_ID["xml"]
+        val lower = sample.lowercase()
+        if (lower.contains("<!doctype html") || lower.contains("<html")) {
+            return BY_ID["html"]
+        }
+        fun hits(needle: String): Int {
+            var n = 0
+            var i = sample.indexOf(needle)
+            while (i >= 0) {
+                n++
+                i = sample.indexOf(needle, i + needle.length)
+            }
+            return n
+        }
+        val scores = HashMap<String, Int>()
+        fun add(id: String, points: Int) {
+            if (points > 0) scores[id] = (scores[id] ?: 0) + points
+        }
+        // JavaScript family
+        add("javascript", hits("function ") * 3 + hits("=>") * 3 +
+            hits("const ") * 2 + hits("let ") * 2 + hits("var ") +
+            hits("console.log") * 3 + hits("require(") * 2 +
+            hits("module.exports") * 3 + hits("document.") +
+            hits("addEventListener") * 2)
+        // Python
+        add("python", hits("def ") * 3 + hits("elif ") * 3 +
+            hits("import ") + hits("print(") * 2 + hits("self.") +
+            hits("__name__") * 3)
+        // SQL
+        add("sql", hits("SELECT ") * 3 + hits(" FROM ") * 2 +
+            hits("INSERT INTO") * 3 + hits("CREATE TABLE") * 3)
+        // CSS: property colons inside braces is the giveaway
+        add("css", hits("color:") * 2 + hits("margin:") * 2 +
+            hits("padding:") * 2 + hits("@media") * 3 +
+            hits("font-size:") * 2 + hits("display:") * 2)
+        // JSON: starts with a brace/bracket and is full of "key":
+        val trimmed = sample.trimStart()
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            add("json", hits("\":") * 2 + hits("\": ") )
+        }
+        // HTML without a doctype (fragments)
+        add("html", hits("<div") * 2 + hits("<span") + hits("</") +
+            hits("<script") * 2 + hits("<p>") )
+        val best = scores.maxByOrNull { it.value } ?: return null
+        if (best.value < 5) return null
+        // JSON only wins when code markers are absent (a JS object
+        // literal is not a JSON document).
+        if (best.key == "json" && (scores["javascript"] ?: 0) >= 3) {
+            return BY_ID["javascript"]
+        }
+        return BY_ID[best.key]
+    }
+
     /** Resolve a doc's syntax choice ("auto"/"none"/language id) to a Lang. */
     fun resolve(choice: String, fileName: String): Lang? = when (choice) {
         NONE -> null

@@ -734,7 +734,15 @@ class EditorActivity : Activity() {
                 editor.pairRanges = emptyList()
                 return
             }
+            val source = editor.textString()
+            // Name first; when the name says nothing (new files,
+            // .txt), sniff the content — KiA, item 54.
             val lang = SyntaxHighlighter.resolve(doc.syntax, doc.name)
+                ?: if (doc.syntax == SyntaxHighlighter.AUTO) {
+                    SyntaxHighlighter.detect(source)
+                } else {
+                    null
+                }
             if (lang == null) {
                 editor.highlightRanges = emptyList()
                 editor.codeBehaviors = false
@@ -758,7 +766,6 @@ class EditorActivity : Activity() {
             // Only the batched span write happens on the UI thread;
             // find highlights use BackgroundColorSpans, which the
             // syntax pass never touches, so they survive untouched.
-            val source = editor.textString()
             val docRef = doc
             val version = ++highlightVersion
             highlightExecutor.execute {
