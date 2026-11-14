@@ -89,6 +89,11 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_ENCODING, ENC_UTF8) ?: ENC_UTF8
         set(v) = prefs.edit().putString(KEY_ENCODING, v).apply()
 
+    /** Editor colour scheme id ("default" follows the app theme). */
+    var visualStyle: String
+        get() = prefs.getString(KEY_VISUAL_STYLE, "default") ?: "default"
+        set(v) = prefs.edit().putString(KEY_VISUAL_STYLE, v).apply()
+
     /** true = CRLF, false = LF. */
     var crlf: Boolean
         get() = prefs.getBoolean(KEY_CRLF, false)
@@ -144,6 +149,7 @@ class AppSettings(context: Context) {
         private const val KEY_TYPE_FILTER = "file_type_filter"
         private const val KEY_RESUME = "resume_session"
         private const val KEY_SORT_BY_NAME = "sort_by_name"
+        private const val KEY_VISUAL_STYLE = "visual_style"
 
         const val THEME_SYSTEM = "system"
         const val THEME_LIGHT = "light"
@@ -164,7 +170,7 @@ class AppSettings(context: Context) {
         )
 
         const val ENC_UTF8 = "UTF-8"
-        val ENCODINGS = listOf("UTF-8", "UTF-16", "Windows-1256", "Windows-1252", "ISO-8859-1")
+        val ENCODINGS = TextCodec.ENCODINGS
 
         fun colorFor(accent: String): Int = colorFor(accent, dark = false)
 
@@ -174,7 +180,7 @@ class AppSettings(context: Context) {
             ACCENT_TEAL -> Color.rgb(0, 121, 107)
             ACCENT_GREEN -> Color.rgb(46, 125, 50)
             ACCENT_MONO -> if (dark) Color.WHITE else Color.rgb(17, 17, 17)
-            else -> Color.rgb(218, 113, 81) // orange (default) — the logo color #DA7151
+            else -> Color.rgb(244, 102, 88) // orange (default) — the logo color #F46658
         }
     }
 }

@@ -17,7 +17,6 @@ import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -55,7 +54,11 @@ class EditorActivity : Activity() {
         var dirty: Boolean = false,
         var selection: Int = 0,
         var needsDestination: Boolean = false,
-        var draftFile: File? = null
+        var draftFile: File? = null,
+        /** This file's encoding: used for every read and write of it. */
+        var encoding: String = "UTF-8",
+        /** Syntax choice: SyntaxHighlighter.AUTO, NONE, or a language id. */
+        var syntax: String = SyntaxHighlighter.AUTO
     )
 
     private lateinit var settings: AppSettings
@@ -226,7 +229,8 @@ class EditorActivity : Activity() {
             name = sanitizeFileName(displayName),
             text = "",
             needsDestination = true,
-            draftFile = draft
+            draftFile = draft,
+            encoding = settings.encoding
         )
     }
 
@@ -239,13 +243,13 @@ class EditorActivity : Activity() {
                 val uri = Uri.parse(external)
                 val name = intent.getStringExtra(EXTRA_NAME) ?: "file.txt"
                 RecentFiles(this).add(uri, name)
-                listOf(Doc(uri = uri, name = name, text = readExternal(uri)))
+                listOf(docFromUri(uri, name))
             }
             intent.data != null -> {
                 val uri = intent.data!!
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                listOf(Doc(uri = uri, name = name, text = readExternal(uri)))
+                listOf(docFromUri(uri, name))
             }
             newName != null -> listOf(newDraftDoc(newName))
             else -> listOf(newDraftDoc("Untitled"))
@@ -258,7 +262,7 @@ class EditorActivity : Activity() {
             when {
                 entry.uri != null -> {
                     val uri = Uri.parse(entry.uri)
-                    Doc(uri = uri, name = entry.name, text = readExternal(uri))
+                    docFromUri(uri, entry.name)
                 }
                 entry.draftFileName != null -> {
                     val draft = File(File(filesDir, "drafts"), entry.draftFileName)
@@ -292,11 +296,19 @@ class EditorActivity : Activity() {
         })
     }
 
-    private fun readExternal(uri: Uri): String = try {
-        TextFileIo.read(this, uri)
+    /** Reads a file; returns its text and the encoding actually used
+     *  (a BOM in the file wins over the Settings default). */
+    private fun readExternal(uri: Uri, preferred: String = settings.encoding):
+        Pair<String, String> = try {
+        TextFileIo.read(this, uri, preferred)
     } catch (e: Exception) {
         Toast.makeText(this, "Could not open file: ${e.message}", Toast.LENGTH_LONG).show()
-        ""
+        "" to preferred
+    }
+
+    private fun docFromUri(uri: Uri, name: String): Doc {
+        val (text, usedEncoding) = readExternal(uri)
+        return Doc(uri = uri, name = name, text = text, encoding = usedEncoding)
     }
 
     private fun stashActive() {
@@ -462,7 +474,7 @@ class EditorActivity : Activity() {
         if (doc === docs.getOrNull(active)) stashActive()
         try {
             when {
-                doc.uri != null -> TextFileIo.write(this, doc.uri!!, doc.text)
+                doc.uri != null -> TextFileIo.write(this, doc.uri!!, doc.text, doc.encoding)
                 doc.draftFile != null -> {
                     doc.draftFile!!.parentFile?.mkdirs()
                     doc.draftFile!!.writeText(doc.text)
@@ -645,14 +657,59 @@ class EditorActivity : Activity() {
         }
         if (editor.inputType != inputType) editor.inputType = inputType
         accessoryScroll.visibility = if (settings.accessoryView) View.VISIBLE else View.GONE
+        applyEditorStyle()
         refreshLineNumbers()
     }
 
+    /** The active editor colour scheme, or null for "Default" (app theme). */
+    private fun currentStyle(): EditorStyle? =
+        EditorStyles.byId(AppSettings(this).visualStyle)
+
+    /** Paint the editing area (background, text, gutter) from the active
+     *  Visual Style; "Default" follows the app theme as before. */
+    private fun applyEditorStyle() {
+        val style = currentStyle()
+        val editorRow = editor.parent as? View
+        if (style == null) {
+            editor.setTextColor(palette.textPrimary)
+            editor.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            editor.highlightColor = palette.accent and 0x66FFFFFF
+            lineNumbers.setTextColor(palette.textSecondary)
+            gutter.setBackgroundColor(palette.alt)
+            editorRow?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        } else {
+            editor.setTextColor(style.foreground)
+            editor.setBackgroundColor(style.background)
+            editor.highlightColor = style.selection
+            lineNumbers.setTextColor(style.gutterText)
+            gutter.setBackgroundColor(style.gutterBackground)
+            editorRow?.setBackgroundColor(style.background)
+        }
+    }
+
     private fun applyHighlighting() {
-        if (!settings.syntaxHighlight) return
         val doc = docs.getOrNull(active) ?: return
         try {
-            SyntaxHighlighter.apply(editor.text, doc.name)
+            if (!settings.syntaxHighlight) {
+                SyntaxHighlighter.clear(editor.text)
+                return
+            }
+            val lang = SyntaxHighlighter.resolve(doc.syntax, doc.name)
+            if (lang == null) {
+                SyntaxHighlighter.clear(editor.text)
+                return
+            }
+            val style = currentStyle() ?: EditorStyle(
+                id = EditorStyles.DEFAULT_ID, name = "Default",
+                background = palette.surface, foreground = palette.textPrimary,
+                keyword = android.graphics.Color.rgb(156, 39, 176),
+                string = android.graphics.Color.rgb(46, 125, 50),
+                comment = android.graphics.Color.rgb(140, 140, 140),
+                number = android.graphics.Color.rgb(21, 101, 192),
+                tag = android.graphics.Color.rgb(0, 105, 92),
+                property = android.graphics.Color.rgb(230, 81, 0)
+            )
+            SyntaxHighlighter.apply(editor.text, lang, style)
         } catch (e: Exception) {
             // Highlighting is cosmetic; never let it break editing.
         }
@@ -744,7 +801,6 @@ class EditorActivity : Activity() {
         val menu = PopupMenu(this, anchor)
         menu.menu.add(0, M_NEW_TAB, 0, "New")
         menu.menu.add(0, M_OPEN_FILE, 1, "Open…")
-        menu.menu.add(0, M_OPEN_RECENT, 2, "Open recent…")
         menu.menu.add(0, M_SAVE, 3, "Save")
         menu.menu.add(0, M_SAVE_AS, 4, "Save as…")
         menu.menu.add(0, M_RELOAD, 5, "Reload")
@@ -759,19 +815,20 @@ class EditorActivity : Activity() {
         menu.menu.add(0, M_STATS, 14, "Statistics")
         menu.menu.add(0, M_SHARE, 15, "Share")
         menu.menu.add(0, M_PRINT, 16, "Print")
-        menu.menu.add(0, M_INPUT_METHOD, 20, "Input method")
-        val wrapItem = menu.menu.add(0, M_WRAP, 17, "Word wrap")
+        menu.menu.add(0, M_VISUAL_STYLE, 17, "Visual style…")
+        menu.menu.add(0, M_ENCODING, 18, "Encoding…")
+        menu.menu.add(0, M_SYNTAX, 19, "Syntax…")
+        val wrapItem = menu.menu.add(0, M_WRAP, 20, "Word wrap")
         wrapItem.isCheckable = true
         wrapItem.isChecked = settings.wordWrap
-        val roItem = menu.menu.add(0, M_READ_ONLY, 18, "Read only")
+        val roItem = menu.menu.add(0, M_READ_ONLY, 21, "Read only")
         roItem.isCheckable = true
         roItem.isChecked = readOnly
-        menu.menu.add(0, M_SETTINGS, 19, "Settings")
+        menu.menu.add(0, M_SETTINGS, 22, "Settings")
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 M_NEW_TAB -> addDoc(newDraftDoc("Untitled"))
                 M_OPEN_FILE -> pickExternalFile()
-                M_OPEN_RECENT -> promptOpenRecent()
                 M_SAVE -> onSavePressed()
                 M_SAVE_AS -> promptSaveAs()
                 M_RELOAD -> reloadActive()
@@ -788,10 +845,9 @@ class EditorActivity : Activity() {
                 M_STATS -> showStats()
                 M_SHARE -> shareText()
                 M_PRINT -> printActive()
-                M_INPUT_METHOD -> {
-                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showInputMethodPicker()
-                }
+                M_VISUAL_STYLE -> promptVisualStyle()
+                M_ENCODING -> promptEncoding()
+                M_SYNTAX -> promptSyntax()
                 M_WRAP -> {
                     settings.wordWrap = !settings.wordWrap
                     editor.setHorizontallyScrolling(!settings.wordWrap)
@@ -802,6 +858,101 @@ class EditorActivity : Activity() {
             true
         }
         menu.show()
+    }
+
+    /** Visual Styles picker: recolours the editing area immediately. */
+    private fun promptVisualStyle() {
+        val names = EditorStyles.menuNames().toTypedArray()
+        val ids = listOf(EditorStyles.DEFAULT_ID) + EditorStyles.ALL.map { it.id }
+        val current = ids.indexOf(AppSettings(this).visualStyle).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Visual Styles")
+            .setSingleChoiceItems(names, current) { dialog, which ->
+                AppSettings(this).visualStyle = ids[which]
+                settings = AppSettings(this)
+                applyEditorStyle()
+                applyHighlighting()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Encoding picker for the active file. With a saved file open, the
+     *  file is re-read from disk using the chosen encoding (that is what
+     *  the encoding really means); for a new file it sets how the file
+     *  will be written. */
+    private fun promptEncoding() {
+        val doc = docs.getOrNull(active) ?: return
+        stashActive()
+        val names = com.kiaashkan.editnote.data.TextCodec.ENCODINGS.toTypedArray()
+        // A file opened as UTF-32LE/BE shows the plain "UTF-32" entry.
+        val docEncDisplay =
+            if (doc.encoding.startsWith("UTF-32")) "UTF-32" else doc.encoding
+        val current = names.indexOfFirst {
+            it.equals(docEncDisplay, ignoreCase = true)
+        }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Encoding")
+            .setSingleChoiceItems(names, current) { dialog, which ->
+                dialog.dismiss()
+                applyEncodingChoice(doc, names[which])
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun applyEncodingChoice(doc: Doc, chosen: String) {
+        if (chosen == doc.encoding) return
+        val uri = doc.uri
+        if (uri == null) {
+            // New file: nothing to re-read; the choice applies on save.
+            doc.encoding = chosen
+            Toast.makeText(this, "Encoding: $chosen (applies when saved)", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val reread = {
+            try {
+                doc.text = com.kiaashkan.editnote.data.TextFileIo.readForced(this, uri, chosen)
+                doc.encoding = chosen
+                doc.dirty = false
+                doc.selection = 0
+                if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
+                Toast.makeText(this, "Encoding: $chosen", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Could not re-read file: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+        if (doc.dirty) {
+            AlertDialog.Builder(this)
+                .setTitle("Re-read with $chosen?")
+                .setMessage("Changing the encoding re-reads the file from disk. Unsaved changes in this tab will be lost.")
+                .setPositiveButton("Re-read") { _, _ -> reread() }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else reread()
+    }
+
+    /** Syntax picker for the active file: Automatic (by extension),
+     *  None, or a specific language. Applies immediately. */
+    private fun promptSyntax() {
+        val doc = docs.getOrNull(active) ?: return
+        val labels = mutableListOf("Automatic", "None")
+        val ids = mutableListOf(SyntaxHighlighter.AUTO, SyntaxHighlighter.NONE)
+        SyntaxHighlighter.LANGUAGES.forEach {
+            labels.add(it.display)
+            ids.add(it.id)
+        }
+        val current = ids.indexOf(doc.syntax).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Syntax")
+            .setSingleChoiceItems(labels.toTypedArray(), current) { dialog, which ->
+                doc.syntax = ids[which]
+                applyHighlighting()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun setReadOnly(on: Boolean) {
@@ -820,7 +971,9 @@ class EditorActivity : Activity() {
             return
         }
         val doReload = {
-            doc.text = readExternal(uri)
+            val (reloadedText, reloadedEnc) = readExternal(uri, doc.encoding)
+            doc.text = reloadedText
+            doc.encoding = reloadedEnc
             doc.dirty = false
             doc.selection = 0
             if (doc === docs.getOrNull(active)) loadDocIntoEditor(doc)
@@ -920,21 +1073,6 @@ class EditorActivity : Activity() {
         )
     }
 
-    private fun promptOpenRecent() {
-        val entries = RecentFiles(this).list()
-        if (entries.isEmpty()) {
-            Toast.makeText(this, "No recent files yet", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Open recent")
-            .setItems(entries.map { it.name }.toTypedArray()) { _, which ->
-                val entry = entries[which]
-                val uri = Uri.parse(entry.uri)
-                addDoc(Doc(uri = uri, name = entry.name, text = readExternal(uri)))
-            }
-            .show()
-    }
 
     private fun pickExternalFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -1010,14 +1148,14 @@ class EditorActivity : Activity() {
                 } catch (e: SecurityException) { /* temporary access is fine */ }
                 val name = RecentFiles.displayName(this, uri)
                 RecentFiles(this).add(uri, name)
-                addDoc(Doc(uri = uri, name = name, text = readExternal(uri)))
+                addDoc(docFromUri(uri, name))
             }
             REQ_SAVE_DEST, REQ_CREATE -> {
                 val doc = pendingDestinationDoc ?: docs.getOrNull(active) ?: return
                 pendingDestinationDoc = null
                 stashActiveIf(doc)
                 try {
-                    TextFileIo.write(this, uri, doc.text)
+                    TextFileIo.write(this, uri, doc.text, doc.encoding)
                     doc.uri = uri
                     doc.name = RecentFiles.displayName(this, uri)
                     doc.needsDestination = false
@@ -1170,12 +1308,25 @@ class EditorActivity : Activity() {
     }
 
     private fun showStats() {
+        val doc = docs.getOrNull(active) ?: return
+        stashActive()
         val text = editor.text.toString()
         val words = text.split(Regex("\\s+")).count { it.isNotBlank() }
         val lines = if (text.isEmpty()) 0 else text.count { it == '\n' } + 1
+        val syntaxLabel = when (doc.syntax) {
+            SyntaxHighlighter.AUTO ->
+                SyntaxHighlighter.languageForExtension(doc.name)?.display?.let { "$it (automatic)" }
+                    ?: "None (automatic)"
+            SyntaxHighlighter.NONE -> "None"
+            else -> SyntaxHighlighter.languageById(doc.syntax)?.display ?: doc.syntax
+        }
+        val styleLabel = currentStyle()?.name ?: "Default"
         AlertDialog.Builder(this)
             .setTitle("Statistics")
-            .setMessage("Characters: ${text.length}\nWords: $words\nLines: $lines")
+            .setMessage(
+                "Characters: ${text.length}\nWords: $words\nLines: $lines\n" +
+                    "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel"
+            )
             .setPositiveButton("OK", null)
             .show()
     }
@@ -1198,7 +1349,6 @@ class EditorActivity : Activity() {
         private const val REQ_SAVE_DEST = 2003
         private const val M_NEW_TAB = 20
         private const val M_OPEN_FILE = 2
-        private const val M_OPEN_RECENT = 21
         private const val M_SAVE = 22
         private const val M_SAVE_AS = 6
         private const val M_RELOAD = 23
@@ -1213,7 +1363,9 @@ class EditorActivity : Activity() {
         private const val M_STATS = 4
         private const val M_SHARE = 5
         private const val M_PRINT = 30
-        private const val M_INPUT_METHOD = 31
+        private const val M_VISUAL_STYLE = 31
+        private const val M_ENCODING = 32
+        private const val M_SYNTAX = 33
         private const val M_WRAP = 7
         private const val M_READ_ONLY = 8
         private const val M_SETTINGS = 9
