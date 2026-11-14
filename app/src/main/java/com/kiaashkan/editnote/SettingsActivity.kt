@@ -53,6 +53,34 @@ class SettingsActivity : Activity() {
         findViewById<LinearLayout>(R.id.aboutUpdate).setOnClickListener {
             openUrl("https://github.com/kiaashkan/EditNote/releases/latest")
         }
+        // Bug report row (KiA, item 29): opens the mail app addressed to
+        // KiA with the app/Android version already in the message.
+        findViewById<LinearLayout>(R.id.aboutBug).setOnClickListener {
+            val version = try {
+                packageManager.getPackageInfo(packageName, 0).versionName
+            } catch (e: Exception) {
+                "?"
+            }
+            val subject = android.net.Uri.encode("EditNote bug report")
+            val body = android.net.Uri.encode(
+                "EditNote $version · Android ${android.os.Build.VERSION.RELEASE}\n\n" +
+                    "What happened:\n"
+            )
+            try {
+                startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_SENDTO,
+                        android.net.Uri.parse(
+                            "mailto:kiaashkan6@gmail.com?subject=$subject&body=$body"
+                        )
+                    )
+                )
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(
+                    this, "No email app available", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
 
         // Theme
         val themeGroup = findViewById<RadioGroup>(R.id.themeGroup)
@@ -171,8 +199,14 @@ class SettingsActivity : Activity() {
         indentValue.setTextColor(palette.accent)
         refreshIndent()
         findViewById<android.view.View>(R.id.rowIndent).setOnClickListener {
-            settings.indentWithTab = !settings.indentWithTab
-            refreshIndent()
+            showPicker(
+                "Indentation",
+                listOf("4 spaces", "Tab"),
+                if (settings.indentWithTab) 1 else 0
+            ) { picked ->
+                settings.indentWithTab = picked == 1
+                refreshIndent()
+            }
         }
 
         // Files & saving
@@ -193,9 +227,16 @@ class SettingsActivity : Activity() {
         intervalValue.setTextColor(palette.accent)
         refreshInterval()
         findViewById<android.view.View>(R.id.rowInterval).setOnClickListener {
-            val idx = intervals.indexOf(settings.autosaveIntervalSec).let { if (it < 0) 1 else it }
-            settings.autosaveIntervalSec = intervals[(idx + 1) % intervals.size]
-            refreshInterval()
+            val current = intervals.indexOf(settings.autosaveIntervalSec)
+                .let { if (it < 0) 1 else it }
+            showPicker(
+                "Autosave interval",
+                intervals.map { intervalLabel(it) },
+                current
+            ) { picked ->
+                settings.autosaveIntervalSec = intervals[picked]
+                refreshInterval()
+            }
         }
 
         val encodingValue = findViewById<TextView>(R.id.encodingValue)
@@ -206,9 +247,11 @@ class SettingsActivity : Activity() {
         refreshEncoding()
         findViewById<android.view.View>(R.id.rowEncoding).setOnClickListener {
             val list = AppSettings.ENCODINGS
-            val idx = list.indexOf(settings.encoding).let { if (it < 0) 0 else it }
-            settings.encoding = list[(idx + 1) % list.size]
-            refreshEncoding()
+            val current = list.indexOf(settings.encoding).let { if (it < 0) 0 else it }
+            showPicker("Default encoding", list, current) { picked ->
+                settings.encoding = list[picked]
+                refreshEncoding()
+            }
         }
 
         val lineBreakValue = findViewById<TextView>(R.id.lineBreakValue)
@@ -218,12 +261,37 @@ class SettingsActivity : Activity() {
         lineBreakValue.setTextColor(palette.accent)
         refreshLineBreak()
         findViewById<android.view.View>(R.id.rowLineBreak).setOnClickListener {
-            settings.crlf = !settings.crlf
-            refreshLineBreak()
+            showPicker(
+                "Line break",
+                listOf("LF", "CRLF (Windows)"),
+                if (settings.crlf) 1 else 0
+            ) { picked ->
+                settings.crlf = picked == 1
+                refreshLineBreak()
+            }
         }
 
         bindCheck(R.id.checkTypeFilter, settings.fileTypeFilter) { settings.fileTypeFilter = it }
         bindCheck(R.id.checkResume, settings.resumeSession) { settings.resumeSession = it }
+    }
+
+    /** Single-choice list for the value rows (KiA, item 27: tapping a
+     *  row must open a list to choose from, not cycle one step at a
+     *  time). Same picker style as the editor's own lists. */
+    private fun showPicker(
+        title: String,
+        options: List<String>,
+        current: Int,
+        onPick: (Int) -> Unit
+    ) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setSingleChoiceItems(options.toTypedArray(), current) { dialog, which ->
+                onPick(which)
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun bindCheck(id: Int, initial: Boolean, save: (Boolean) -> Unit) {

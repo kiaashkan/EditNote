@@ -47,9 +47,10 @@ important hides inside the app.
 
 **Settings**
 - A modern grouped-cards layout with switches; an About card with the
-  maker's GitHub and an **Update EditNote** row that opens the latest
+  maker's GitHub, an **Update EditNote** row that opens the latest
   GitHub release (the app still requests zero permissions, so updates
-  happen in your browser)
+  happen in your browser), and a **Report a bug** row that opens your
+  mail app addressed to the maker
 - Theme (System / Light / Dark) and accent colors (Orange by default, plus
   Black/White that adapts to the theme, Green, Blue, Purple, Teal) — every
   control in the app follows the chosen color

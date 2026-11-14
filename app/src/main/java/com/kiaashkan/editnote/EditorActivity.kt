@@ -65,7 +65,7 @@ class EditorActivity : Activity() {
     private lateinit var settings: AppSettings
     private lateinit var palette: Palette
     private lateinit var editor: EditText
-    private lateinit var lineNumbers: TextView
+    private lateinit var lineNumbers: LineNumbersView
     private lateinit var gutter: View
     private lateinit var titleView: TextView
     private lateinit var statusView: TextView
@@ -122,6 +122,7 @@ class EditorActivity : Activity() {
 
         editor = findViewById(R.id.editor)
         lineNumbers = findViewById(R.id.lineNumbers)
+        lineNumbers.editor = editor
         gutter = findViewById(R.id.gutterFrame)
         titleView = findViewById(R.id.fileTitle)
         statusView = findViewById(R.id.saveStatus)
@@ -175,7 +176,7 @@ class EditorActivity : Activity() {
             }
         })
         editor.viewTreeObserver.addOnScrollChangedListener {
-            lineNumbers.translationY = -editor.scrollY.toFloat()
+            lineNumbers.invalidate()
         }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finishWithSave() }
@@ -658,10 +659,7 @@ class EditorActivity : Activity() {
             return
         }
         gutter.visibility = View.VISIBLE
-        val count = editor.lineCount.coerceAtLeast(1)
-        val text = (1..count).joinToString("\n")
-        if (lineNumbers.text.toString() != text) lineNumbers.text = text
-        lineNumbers.translationY = -editor.scrollY.toFloat()
+        lineNumbers.refresh()
     }
 
     private fun applyEditorSettings() {
@@ -669,11 +667,10 @@ class EditorActivity : Activity() {
         editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, settings.fontSizeSp)
         val face = if (settings.monospace) Typeface.MONOSPACE else Typeface.DEFAULT
         editor.typeface = face
-        lineNumbers.setTextSize(TypedValue.COMPLEX_UNIT_SP, settings.fontSizeSp)
-        lineNumbers.typeface = face
+        lineNumbers.setTextSizeSp(settings.fontSizeSp)
+        lineNumbers.setTypeface(face)
         val spacingPx = settings.lineSpacingSp * resources.displayMetrics.scaledDensity
         editor.setLineSpacing(spacingPx, 1f)
-        lineNumbers.setLineSpacing(spacingPx, 1f)
         editor.setHorizontallyScrolling(!settings.wordWrap)
         var inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         if (!settings.showSuggestions) {
@@ -1348,6 +1345,22 @@ class EditorActivity : Activity() {
         }
     }
 
+    /** Select the match at [idx] AND scroll the document so it is
+     *  actually on screen. setSelection alone does not scroll an
+     *  unfocused EditText — focus sits in the find field — which is why
+     *  search looked dead (KiA, item 28): the counter moved but the
+     *  document never jumped to the match. */
+    private fun revealMatch(idx: Int) {
+        editor.setSelection(idx, idx + lastQuery.length)
+        editor.post {
+            val layout = editor.layout ?: return@post
+            val line = layout.getLineForOffset(idx)
+            val y = layout.getLineTop(line)
+            val target = (y - editor.height / 3).coerceAtLeast(0)
+            editor.scrollTo(0, target)
+        }
+    }
+
     private fun findNext() {
         if (lastQuery.isEmpty()) return
         val text = editor.text.toString()
@@ -1361,7 +1374,7 @@ class EditorActivity : Activity() {
             return
         }
         lastFindIndex = idx
-        editor.setSelection(idx, idx + lastQuery.length)
+        revealMatch(idx)
         refreshFindCounter()
     }
 
@@ -1380,7 +1393,7 @@ class EditorActivity : Activity() {
             return
         }
         lastFindIndex = idx
-        editor.setSelection(idx, idx + lastQuery.length)
+        revealMatch(idx)
         refreshFindCounter()
     }
 
@@ -1427,6 +1440,11 @@ class EditorActivity : Activity() {
         editor.text.replace(idx, idx + find.length, replacement)
         editor.setSelection(idx, idx + replacement.length)
         lastFindIndex = idx
+        editor.post {
+            val layout = editor.layout ?: return@post
+            val y = layout.getLineTop(layout.getLineForOffset(idx))
+            editor.scrollTo(0, (y - editor.height / 3).coerceAtLeast(0))
+        }
     }
 
     private fun replaceAll(find: String, replacement: String) {
