@@ -78,17 +78,6 @@ important hides inside the app.
 - Fully offline; no analytics, no ads, no accounts
 - Files are read and written only where you open or save them
 
-## Support EditNote
-
-EditNote is free — no ads, no tracking. If it helps you and you'd like
-to support its development, you can donate GRAM (on TON) to:
-
-```
-UQB6Wphj-CHN1kSwU5fzgMUval6SdJljEhX-52q5qP-yKbTg
-```
-
-Thank you! 💎
-
 ## Release naming
 
 Releases follow [Semantic Versioning](https://semver.org):
@@ -123,3 +112,19 @@ environments. Releases are signed with a private release keystore that is
 - Package: `com.kiaashkan.editnote`
 - minSdk 26 (Android 8.0), targetSdk 34
 - Kotlin, Android framework only, no third-party dependencies
+
+## ❤️ Support EditNote
+
+EditNote is free — no ads, no tracking. If it helps you and you'd like
+to support its development, you can donate here:
+
+- **Coin:** GRAM
+- **Network:** TON — please send **only GRAM on the TON network** to this
+  address. Sending a different coin, or using a different network, will
+  lose the funds.
+
+```
+UQB6Wphj-CHN1kSwU5fzgMUval6SdJljEhX-52q5qP-yKbTg
+```
+
+Thank you! ❤️
