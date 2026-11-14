@@ -1461,7 +1461,7 @@ class EditorActivity : Activity() {
         store.setBookmarked(uri.toString(), now)
         Toast.makeText(
             this,
-            if (now) "Bookmarked — pinned on the home screen" else "Bookmark removed",
+            if (now) "Bookmarked" else "Bookmark removed",
             Toast.LENGTH_SHORT
         ).show()
     }

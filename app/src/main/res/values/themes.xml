@@ -9,10 +9,15 @@
     <!-- Light -->
     <style name="Theme.EditNote.Light.Orange" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:colorAccent">#F46658</item>
-        <item name="android:windowBackground">#FAFAFA</item>
-        <item name="android:statusBarColor">#FAFAFA</item>
+        <!-- KiA (item 72): the light background was #FAFAFA — a hair
+             from white, so white cards and their hairline borders
+             vanished into it and every screen looked washed out.
+             A real light grey (#F1F1F4, matching Palette.surface)
+             lets white cards read as cards again. -->
+        <item name="android:windowBackground">#F1F1F4</item>
+        <item name="android:statusBarColor">#F1F1F4</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">#FAFAFA</item>
+        <item name="android:navigationBarColor">#F1F1F4</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>
     <style name="Theme.EditNote.Light.Green" parent="Theme.EditNote.Light.Orange">

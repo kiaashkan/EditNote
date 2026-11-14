@@ -25,7 +25,8 @@ import java.util.Date
 
 /**
  * Home screen (v0.3): EditNote stores no files of its own. The home screen
- * shows the device files you recently opened (bookmarks pinned first),
+ * shows the device files you recently opened, most recent first —
+ * bookmarks are starred but never change the order (KiA, item 70) —
  * plus Open / New actions. Files live — and die — on the device itself.
  */
 class MainActivity : Activity() {
@@ -452,8 +453,14 @@ class MainActivity : Activity() {
         private var items: List<RecentFiles.Entry> = emptyList()
 
         fun submit(entries: List<RecentFiles.Entry>) {
+            // KiA (item 70): A–Z sorting is by name only — the old
+            // bookmarked-first key pinned bookmarks to the top even
+            // here. Default order (list order) is pure recency.
+            // KiA (item 71): the name sort is NATURAL — digit runs
+            // compare by value, so numbered files order 1, 2, 5, 10
+            // instead of the plain lexicographic 1, 10, 2, 5.
             items = if (AppSettings(this@MainActivity).sortByName) {
-                entries.sortedWith(compareBy({ !it.bookmarked }, { it.name.lowercase() }))
+                entries.sortedWith { a, b -> naturalNameCompare(a.name, b.name) }
             } else entries
             notifyDataSetChanged()
         }
@@ -476,7 +483,7 @@ class MainActivity : Activity() {
             // Visible bookmark star (KiA, item 38: bookmarks existed in
             // the data layer and a long-press menu, but with nothing on
             // the row the feature was undiscoverable). Bookmarked files
-            // pin to the top and survive a list reset.
+            // survive a list reset; they do NOT pin to the top (item 70).
             val star = view.findViewById<ImageButton>(R.id.btnBookmark)
             star.setImageResource(
                 if (entry.bookmarked) R.drawable.ic_star else R.drawable.ic_star_outline
@@ -506,5 +513,43 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_OPEN = 1001
+
+        /**
+         * Natural name ordering (KiA, item 71): digit runs compare
+         * by numeric value ("2" < "10"), everything else compares
+         * case-insensitively, character by character. Pure string
+         * work — JVM-tested (1, 2, 5, 10 order; case; prefixes).
+         */
+        fun naturalNameCompare(a: String, b: String): Int {
+            var i = 0
+            var j = 0
+            while (i < a.length && j < b.length) {
+                val ca = a[i]
+                val cb = b[j]
+                if (ca.isDigit() && cb.isDigit()) {
+                    var iEnd = i
+                    while (iEnd < a.length && a[iEnd].isDigit()) iEnd++
+                    var jEnd = j
+                    while (jEnd < b.length && b[jEnd].isDigit()) jEnd++
+                    // Numeric compare without overflow: strip the
+                    // leading zeros, the longer run is the bigger
+                    // number, equal lengths compare lexicographically.
+                    val na = a.substring(i, iEnd).trimStart('0')
+                    val nb = b.substring(j, jEnd).trimStart('0')
+                    if (na.length != nb.length) return na.length - nb.length
+                    val byDigits = na.compareTo(nb)
+                    if (byDigits != 0) return byDigits
+                    i = iEnd
+                    j = jEnd
+                } else {
+                    val byChar = ca.lowercaseChar()
+                        .compareTo(cb.lowercaseChar())
+                    if (byChar != 0) return byChar
+                    i++
+                    j++
+                }
+            }
+            return (a.length - i) - (b.length - j)
+        }
     }
 }

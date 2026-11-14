@@ -1011,6 +1011,23 @@ class FastEditorView @JvmOverloads constructor(
             if (t < f) continue
             val x1 = layout.getPrimaryHorizontal(f)
             var x2 = layout.getPrimaryHorizontal(t)
+            if (t == rowEnd && t > rowStart) {
+                // The segment runs to this visual row's end. At a
+                // wrap boundary, offset t is the FIRST character of
+                // the next row, so getPrimaryHorizontal(t) answers
+                // with the next row's start (~0) and the rect
+                // collapsed to a stub — with word wrap on, the
+                // wrapped rows of a line painted as unselected even
+                // under Select all (KiA, item 69). Measure the row's
+                // last character instead and keep whichever answer
+                // reaches further right.
+                val lastChar = layout.text?.getOrNull(t - 1)
+                if (lastChar != null) {
+                    val endX = layout.getPrimaryHorizontal(t - 1) +
+                        textPaint.measureText(lastChar.toString())
+                    if (endX > x2) x2 = endX
+                }
+            }
             if (t == rowEnd && selB > lineStart + rowEnd) {
                 x2 += 10 * density // selection continues past the wrap
             }

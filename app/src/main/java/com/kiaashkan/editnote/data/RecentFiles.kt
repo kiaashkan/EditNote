@@ -39,8 +39,15 @@ class RecentFiles(context: Context) {
     private fun save(entries: List<Entry>) {
         val bookmarks = entries.filter { it.bookmarked }
         val normal = entries.filter { !it.bookmarked }
-        val ordered = normal.sortedByDescending { it.lastOpened }
-        val all = (bookmarks + ordered).take(MAX + bookmarks.size)
+            .sortedByDescending { it.lastOpened }
+            .take(MAX)
+        // KiA (item 70): NO pinning — the stored order is pure
+        // recency, most recently opened first, bookmarked or not.
+        // A bookmark is only a mark (star, filter view, survives a
+        // list reset); it never buys a place at the top. Bookmarks
+        // are still exempt from the recents cap below.
+        val all = (bookmarks + normal)
+            .sortedByDescending { it.lastOpened }
         prefs.edit().putString(
             KEY,
             all.joinToString(SEP) { e ->

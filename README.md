@@ -15,7 +15,9 @@ works on every phone and processor (the app contains no native code).
 ## Your files stay yours
 
 EditNote keeps **no private file storage inside the app**. The home screen
-shows the device files you recently opened (bookmarks pinned first). New
+shows the device files you recently opened, most recent first — you can
+star files as bookmarks, but a bookmark never changes a file's place in
+the list. New
 files are created through the system file picker — you choose the name and
 the folder. If a file is deleted on the device, it is simply gone; nothing
 important hides inside the app.
@@ -25,25 +27,30 @@ important hides inside the app.
 **Editor**
 - Multiple open files with tabs (`*` marks unsaved changes), line numbers
 - Icon mini toolbar: Open, Undo, Redo, Find, Save, Close tab — and Find opens an inline find bar with a match counter and previous/next buttons
-- Three tidy header menus: **File** (New, Open, Save, Save As, Reload,
-  Close tab, Share, Print, Settings), **Edit** (Select All, Paste,
+- Three tidy header menus: **File** (New, Open, Save, Save As, Bookmarked,
+  Reload, Close tab, Share, Print, Settings), **Edit** (Select All, Paste,
   Insert date & time, Increase/Decrease indent, Go to Line,
   Find & Replace, Statistics) and **Options** (Visual style, Encoding,
   Syntax, Word Wrap, Read Only), drawn as modern card popups
 - Find & Replace (single or replace all), Go to Line, text statistics
 - Real syntax highlighting for 22 languages and 16 visual styles
   (GitHub, Monokai, Dracula, Solarized, …)
+- A custom-built editor engine that opens very large files — 100,000+
+  lines — smoothly, with progressive syntax highlighting
 - Per-file encoding: UTF-8, UTF-16, UTF-32, windows-1256, windows-1252,
-  windows-1251, ISO-8859-1, US-ASCII, with BOM detection
+  windows-1251, ISO-8859-1, US-ASCII, UTF-16BE, UTF-16LE, with BOM detection
+- Files opened read-only from other apps (for example Google Drive) are
+  marked "Read-only from source"; Save simply creates a copy in a place
+  you pick — no error, and from then on the copy saves normally
 - Print support
 - Optional accessory symbol bar (Tab, cursor arrows, common symbols)
 - Undo/redo history per tab
 
 **Home**
-- Recent device files with bookmarks and search; sort A–Z, reset list
-  and settings are direct icon buttons in the header
+- Recent device files with bookmarks and search; a natural A–Z sort
+  (numbered files order 1, 2, 5, 10), reset list and settings are direct
+  icon buttons in the header
 - Floating **+** button: two small actions (New file, Open a file) pop up right above it
-- Resume last session with the same tabs
 
 **Settings**
 - A modern grouped-cards layout with switches; an About card with the
@@ -52,16 +59,15 @@ important hides inside the app.
   happen in your browser), and a **Report a bug** row that opens your
   mail app addressed to the maker
 - Theme (System / Light / Dark) and accent colors (Orange by default, plus
-  Black/White that adapts to the theme, Green, Blue, Purple, Teal) — every
+  Black/White that adapts to the theme, Green, Pink, Purple, Cream) — every
   control in the app follows the chosen color
 - Font size, line spacing, monospace font, line numbers, word wrap
 - Auto indent, indentation unit (Tab / 4 spaces), word suggestions,
   auto capitalize, undo with the Back button
 - Autosave with optional confirmation message and interval (30 s – 5 min)
 - Default encoding (UTF-8, UTF-16, UTF-32, Windows-1256, Windows-1252,
-  Windows-1251, ISO-8859-1, US-ASCII)
-- Line break style (LF / CRLF), text-file filter for the open picker,
-  resume session
+  Windows-1251, ISO-8859-1, US-ASCII, UTF-16BE, UTF-16LE)
+- Line break style (LF / CRLF), text-file filter for the open picker
 
 ## Privacy
 
