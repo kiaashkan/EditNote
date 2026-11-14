@@ -103,10 +103,6 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_TYPE_FILTER, true)
         set(v) = prefs.edit().putBoolean(KEY_TYPE_FILTER, v).apply()
 
-    var resumeSession: Boolean
-        get() = prefs.getBoolean(KEY_RESUME, true)
-        set(v) = prefs.edit().putBoolean(KEY_RESUME, v).apply()
-
     var sortByName: Boolean
         get() = prefs.getBoolean(KEY_SORT_BY_NAME, false)
         set(v) = prefs.edit().putBoolean(KEY_SORT_BY_NAME, v).apply()
@@ -147,7 +143,6 @@ class AppSettings(context: Context) {
         private const val KEY_ENCODING = "encoding"
         private const val KEY_CRLF = "crlf"
         private const val KEY_TYPE_FILTER = "file_type_filter"
-        private const val KEY_RESUME = "resume_session"
         private const val KEY_SORT_BY_NAME = "sort_by_name"
         private const val KEY_VISUAL_STYLE = "visual_style"
 
@@ -175,10 +170,14 @@ class AppSettings(context: Context) {
         fun colorFor(accent: String): Int = colorFor(accent, dark = false)
 
         fun colorFor(accent: String, dark: Boolean): Int = when (accent) {
-            ACCENT_BLUE -> Color.rgb(25, 118, 210)
-            ACCENT_PURPLE -> Color.rgb(123, 31, 162)
-            ACCENT_TEAL -> Color.rgb(0, 121, 107)
-            ACCENT_GREEN -> Color.rgb(46, 125, 50)
+            // KiA's own palette (2026-11-14, item 40): the default and
+            // mono stay; the other four slots take his hex values.
+            // (Slot ids are historical: "blue" now shows Pink, "teal"
+            // shows Cream — the ids only key the stored preference.)
+            ACCENT_BLUE -> Color.rgb(255, 204, 255) // #FFCCFF — Pink
+            ACCENT_PURPLE -> Color.rgb(76, 0, 153) // #4C0099
+            ACCENT_TEAL -> Color.rgb(255, 255, 204) // #FFFFCC — Cream
+            ACCENT_GREEN -> Color.rgb(0, 102, 51) // #006633
             ACCENT_MONO -> if (dark) Color.WHITE else Color.rgb(17, 17, 17)
             else -> Color.rgb(244, 102, 88) // orange (default) — the logo color #F46658
         }

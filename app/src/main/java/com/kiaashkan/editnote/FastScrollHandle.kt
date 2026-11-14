@@ -24,6 +24,10 @@ class FastScrollHandle @JvmOverloads constructor(
     var editor: EditText? = null
     var accentColor: Int = 0xFFF46658.toInt()
 
+    /** Fired when the user grabs the pill (the activity cancels any
+     *  running momentum glide so the two never fight). */
+    var onGrab: (() -> Unit)? = null
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var dragging = false
 
@@ -79,6 +83,7 @@ class FastScrollHandle @JvmOverloads constructor(
                     return false
                 }
                 dragging = true
+                onGrab?.invoke()
                 parent?.requestDisallowInterceptTouchEvent(true)
                 scrub(event.y, max)
                 return true

@@ -17,13 +17,25 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <TextView
+        <!-- Brand lockup (KiA, item 39): his logo + wordmark as a
+             transparent PNG — no background of its own, so it sits
+             cleanly on any theme. -->
+        <ImageView
+            android:id="@+id/homeLogo"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="30dp"
             android:layout_weight="1"
-            android:text="EditNote"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:contentDescription="EditNote"
+            android:scaleType="fitStart"
+            android:src="@drawable/logo_lockup" />
+
+        <ImageButton
+            android:id="@+id/btnHomeBookmarks"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Bookmarks"
+            android:src="@drawable/ic_star_outline" />
 
         <ImageButton
             android:id="@+id/btnHomeSort"
@@ -49,15 +61,6 @@
             android:contentDescription="Settings"
             android:src="@drawable/ic_gear" />
     </LinearLayout>
-
-    <Button
-        android:id="@+id/btnResume"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="Resume last session"
-        android:textAllCaps="false"
-        android:visibility="gone" />
 
     <EditText
         android:id="@+id/searchBox"

@@ -17,6 +17,10 @@ import android.text.TextWatcher
 import android.view.inputmethod.EditorInfo
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
+import android.os.SystemClock
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -27,7 +31,6 @@ import android.widget.TextView
 import android.widget.Toast
 import com.kiaashkan.editnote.data.AppSettings
 import com.kiaashkan.editnote.data.RecentFiles
-import com.kiaashkan.editnote.data.SessionStore
 import com.kiaashkan.editnote.data.TextFileIo
 import java.io.File
 import java.text.SimpleDateFormat
@@ -98,6 +101,62 @@ class EditorActivity : Activity() {
     // is an O(1) flag instead of a whole-text comparison.
     private var undoSnapshotChars = 0
     private var editedSinceBaseline = false
+
+    // Momentum glide (KiA, item 34): a stock EditText fling does not
+    // scale to a huge file — a flick dies within a screen or two, so
+    // the user has to drag the whole way. We observe the flick
+    // (never consuming touches), and once the native fling settles,
+    // an extension glide carries the scroll on with a decelerating
+    // animator. Any new touch or handle-grab cancels it.
+    private var glideAnimator: ValueAnimator? = null
+    private var editorTouching = false
+    private val dragSamples = ArrayDeque<Pair<Long, Int>>()
+    private var releaseVelocity = 0f
+    private var lastScrollChangeAt = 0L
+    private var glideSettleTries = 0
+    private val glideSettleRunnable = object : Runnable {
+        override fun run() {
+            if (editorTouching) return
+            val idle = SystemClock.uptimeMillis() - lastScrollChangeAt
+            if (idle < 150 && glideSettleTries < 8) {
+                glideSettleTries++
+                handler.postDelayed(this, 100)
+                return
+            }
+            startExtensionGlide()
+        }
+    }
+
+    private fun cancelGlide() {
+        glideAnimator?.cancel()
+        glideAnimator = null
+        handler.removeCallbacks(glideSettleRunnable)
+    }
+
+    private fun editorMaxScroll(): Int {
+        val layout = editor.layout ?: return 0
+        val content = editor.paddingTop + layout.height + editor.paddingBottom
+        return (content - editor.height).coerceAtLeast(0)
+    }
+
+    private fun startExtensionGlide() {
+        val v = releaseVelocity
+        releaseVelocity = 0f
+        if (kotlin.math.abs(v) < 1500f) return
+        val max = editorMaxScroll()
+        if (max <= 0) return
+        val startY = editor.scrollY
+        val target = (startY + (v * 1.2f).toInt()).coerceIn(0, max)
+        if (kotlin.math.abs(target - startY) < editor.height / 2) return
+        glideAnimator = ValueAnimator.ofInt(startY, target).apply {
+            duration = 750
+            interpolator = DecelerateInterpolator(1.8f)
+            addUpdateListener { anim ->
+                editor.scrollTo(0, anim.animatedValue as Int)
+            }
+            start()
+        }
+    }
 
     private val handler = Handler(Looper.getMainLooper())
     private val autosaveRunnable = Runnable {
@@ -202,10 +261,50 @@ class EditorActivity : Activity() {
                 }
             }
         })
-        editor.setOnScrollChangeListener { _, _, _, _, _ ->
+        editor.setOnScrollChangeListener { _, scrollY, _, _, _ ->
             lineNumbers.invalidate()
             fastScroll.invalidate()
+            lastScrollChangeAt = SystemClock.uptimeMillis()
+            if (editorTouching) {
+                dragSamples.addLast(lastScrollChangeAt to scrollY)
+                while (dragSamples.size > 2 &&
+                    lastScrollChangeAt - dragSamples.first().first > 120
+                ) {
+                    dragSamples.removeFirst()
+                }
+            }
         }
+        // Observation only — returning false keeps the editor's own
+        // touch handling (selection, native fling) fully intact.
+        editor.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cancelGlide()
+                    editorTouching = true
+                    dragSamples.clear()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    editorTouching = false
+                    if (dragSamples.size >= 2) {
+                        val (t0, y0) = dragSamples.first()
+                        val (t1, y1) = dragSamples.last()
+                        val dt = t1 - t0
+                        releaseVelocity = if (dt > 0) {
+                            (y1 - y0) * 1000f / dt
+                        } else {
+                            0f
+                        }
+                    } else {
+                        releaseVelocity = 0f
+                    }
+                    glideSettleTries = 0
+                    handler.removeCallbacks(glideSettleRunnable)
+                    handler.postDelayed(glideSettleRunnable, 180)
+                }
+            }
+            false
+        }
+        fastScroll.onGrab = { cancelGlide() }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finishWithSave() }
         findViewById<ImageButton>(R.id.btnFileMenu).setOnClickListener { showFileMenu(it) }
@@ -257,7 +356,6 @@ class EditorActivity : Activity() {
         super.onPause()
         stashActive()
         docs.filter { it.dirty }.forEach { saveDoc(it, silent = true) }
-        persistSession()
     }
 
     @Deprecated("Back may undo (setting) or leave after saving.")
@@ -289,7 +387,6 @@ class EditorActivity : Activity() {
         val external = intent.getStringExtra(EXTRA_EXTERNAL_URI)
         val newName = intent.getStringExtra(EXTRA_NEW_NAME)
         return when {
-            intent.getBooleanExtra(EXTRA_RESTORE, false) -> restoreSessionDocs()
             external != null -> {
                 val uri = Uri.parse(external)
                 val name = intent.getStringExtra(EXTRA_NAME) ?: "file.txt"
@@ -307,45 +404,7 @@ class EditorActivity : Activity() {
         }
     }
 
-    private fun restoreSessionDocs(): List<Doc> {
-        val store = SessionStore(this)
-        val restored = store.load().mapNotNull { entry ->
-            when {
-                entry.uri != null -> {
-                    val uri = Uri.parse(entry.uri)
-                    docFromUri(uri, entry.name)
-                }
-                entry.draftFileName != null -> {
-                    val draft = File(File(filesDir, "drafts"), entry.draftFileName)
-                    val text = runCatching { draft.readText() }.getOrDefault("")
-                    Doc(
-                        name = entry.name, text = text,
-                        needsDestination = true, draftFile = draft,
-                        dirty = text.isNotEmpty()
-                    )
-                }
-                else -> null
-            }
-        }
-        return restored
-    }
 
-    private fun persistSession() {
-        if (!settings.resumeSession) return
-        stashActive()
-        // Nothing worth restoring (only empty new drafts): clear the session.
-        if (docs.all { it.needsDestination && it.text.isBlank() }) {
-            SessionStore(this).save(emptyList())
-            return
-        }
-        SessionStore(this).save(docs.map { doc ->
-            SessionStore.Entry(
-                uri = doc.uri?.toString(),
-                name = doc.name,
-                draftFileName = if (doc.needsDestination) doc.draftFile?.name else null
-            )
-        })
-    }
 
     /** Reads a file; returns its text and the encoding actually used
      *  (a BOM in the file wins over the Settings default). */
@@ -375,6 +434,7 @@ class EditorActivity : Activity() {
         editor.setText(doc.text)
         editor.setSelection(doc.selection.coerceIn(0, editor.text.length))
         suppress = false
+        cancelGlide()
         baseline = doc.text
         undoStack.clear()
         undoSnapshotChars = 0
@@ -414,7 +474,6 @@ class EditorActivity : Activity() {
         active = docs.lastIndex
         loadDocIntoEditor(doc)
         renderTabs()
-        persistSession()
     }
 
     private fun closeTab(index: Int) {
@@ -446,8 +505,7 @@ class EditorActivity : Activity() {
         val activeDocBefore = docs.getOrNull(active)
         docs.removeAt(index)
         if (docs.isEmpty()) {
-            persistSession()
-            finish()
+                finish()
             return
         }
         if (active > index) active -= 1
@@ -456,7 +514,6 @@ class EditorActivity : Activity() {
         // so closing a background tab never loses cursor position or history.
         if (docs[active] !== activeDocBefore) loadDocIntoEditor(docs[active])
         renderTabs()
-        persistSession()
     }
 
     private var lastTabSignature: String = ""
@@ -621,7 +678,6 @@ class EditorActivity : Activity() {
             return
         }
         docs.filter { it.dirty }.forEach { saveDoc(it, silent = true) }
-        persistSession()
         finish()
     }
 
@@ -929,6 +985,7 @@ class EditorActivity : Activity() {
                 MenuRow("Open…") { pickExternalFile() },
                 MenuRow("Save") { onSavePressed() },
                 MenuRow("Save as…") { promptSaveAs() },
+                MenuRow("Bookmarked", isActiveBookmarked()) { toggleActiveBookmark() },
                 MenuRow("Reload") { reloadActive() },
                 MenuRow("Close tab") { closeTab(active) },
                 MenuRow("Share") { shareText() },
@@ -938,6 +995,36 @@ class EditorActivity : Activity() {
                 }
             )
         )
+    }
+
+    /** Bookmark state of the open file (device files only — drafts
+     *  have no URI yet; they join recents on their first save). */
+    private fun isActiveBookmarked(): Boolean {
+        val doc = docs.getOrNull(active) ?: return false
+        val uri = doc.uri ?: return false
+        val entry = RecentFiles(this).list()
+            .firstOrNull { it.uri == uri.toString() } ?: return false
+        return entry.bookmarked
+    }
+
+    private fun toggleActiveBookmark() {
+        val doc = docs.getOrNull(active) ?: return
+        val uri = doc.uri ?: run {
+            Toast.makeText(
+                this, "Save the file first to bookmark it", Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        val store = RecentFiles(this)
+        val entry = store.list().firstOrNull { it.uri == uri.toString() }
+        if (entry == null) store.add(uri, doc.name)
+        val now = !(entry?.bookmarked ?: false)
+        store.setBookmarked(uri.toString(), now)
+        Toast.makeText(
+            this,
+            if (now) "Bookmarked — pinned on the home screen" else "Bookmark removed",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /** Edit menu: everything that acts on the text. */
@@ -1617,7 +1704,6 @@ class EditorActivity : Activity() {
         private const val EXTRA_EXTERNAL_URI = "external_uri"
         private const val EXTRA_NAME = "display_name"
         private const val EXTRA_NEW_NAME = "new_name"
-        private const val EXTRA_RESTORE = "restore_session"
 
         fun externalIntent(context: Context, uri: Uri, name: String): Intent =
             Intent(context, EditorActivity::class.java)
@@ -1628,10 +1714,6 @@ class EditorActivity : Activity() {
         fun newDocIntent(context: Context, name: String): Intent =
             Intent(context, EditorActivity::class.java)
                 .putExtra(EXTRA_NEW_NAME, name)
-
-        fun restoreIntent(context: Context): Intent =
-            Intent(context, EditorActivity::class.java)
-                .putExtra(EXTRA_RESTORE, true)
 
         /** Local sanitize for draft/suggested names (device files are named by the system picker). */
         fun sanitizeFileName(rawName: String): String {

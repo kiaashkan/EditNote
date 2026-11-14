@@ -10,9 +10,14 @@ class Palette(context: Context) {
     private val dark = AppSettings(context).isDark(context)
     val accent: Int = AppSettings(context).accentColor(context)
 
-    /** Readable text color on top of the accent (black on white mono, else white). */
-    val onAccent: Int =
-        if (accent == Color.WHITE) Color.rgb(17, 17, 17) else Color.WHITE
+    /** Readable text color on top of the accent, by luminance: light
+     *  accents (white mono, KiA's Pink #FFCCFF and Cream #FFFFCC) get
+     *  dark text; everything else gets white. */
+    val onAccent: Int = run {
+        val lum = (0.299 * Color.red(accent) + 0.587 * Color.green(accent) +
+            0.114 * Color.blue(accent)) / 255.0
+        if (lum > 0.6) Color.rgb(17, 17, 17) else Color.WHITE
+    }
 
     val surface: Int = if (dark) Color.rgb(17, 17, 17) else Color.rgb(250, 250, 250)
     val card: Int = if (dark) Color.rgb(30, 30, 32) else Color.WHITE

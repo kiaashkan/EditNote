@@ -1,6 +1,7 @@
 package com.kiaashkan.editnote
 
 import android.app.Activity
+import android.app.Dialog
 import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
@@ -35,7 +36,6 @@ class MainActivity : Activity() {
     private lateinit var adapter: RecentAdapter
     private lateinit var emptyText: TextView
     private lateinit var searchBox: EditText
-    private lateinit var resumeButton: Button
     private var appliedSignature: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,14 +78,27 @@ class MainActivity : Activity() {
         fab.setOnClickListener { toggleSpeedDial() }
         setupSpeedDial()
 
-        resumeButton = findViewById(R.id.btnResume)
-        resumeButton.setOnClickListener {
-            startActivity(EditorActivity.restoreIntent(this))
-        }
-
         // KiA (item 24): three direct icon buttons instead of one ⋮ menu —
         // sort (tinted with the accent while A–Z sorting is on), reset
         // list, and settings.
+        // Bookmarks view (KiA, item 41): a header star button next to
+        // Sort/Reset/Settings filters the list to bookmarked files
+        // only; accent-filled while on, like the Sort tint.
+        val bookmarksBtn = findViewById<ImageButton>(R.id.btnHomeBookmarks)
+        fun refreshBookmarksBtn() {
+            bookmarksBtn.setImageResource(
+                if (bookmarksOnly) R.drawable.ic_star else R.drawable.ic_star_outline
+            )
+            bookmarksBtn.setColorFilter(
+                if (bookmarksOnly) palette.accent else palette.textPrimary
+            )
+        }
+        refreshBookmarksBtn()
+        bookmarksBtn.setOnClickListener {
+            bookmarksOnly = !bookmarksOnly
+            refreshBookmarksBtn()
+            refresh()
+        }
         val sortBtn = findViewById<ImageButton>(R.id.btnHomeSort)
         fun refreshSortTint() {
             sortBtn.setColorFilter(
@@ -100,9 +113,7 @@ class MainActivity : Activity() {
             refresh()
         }
         findViewById<ImageButton>(R.id.btnHomeReset).setOnClickListener {
-            recents.clear()
-            refresh()
-            Toast.makeText(this, "Recent list cleared (bookmarks kept)", Toast.LENGTH_SHORT).show()
+            confirmResetList()
         }
         findViewById<ImageButton>(R.id.btnHomeSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -122,15 +133,102 @@ class MainActivity : Activity() {
     private fun refresh() {
         val query = searchBox.text?.toString()?.trim()?.lowercase() ?: ""
         val entries = recents.list().filter {
-            query.isEmpty() || it.name.lowercase().contains(query)
+            (query.isEmpty() || it.name.lowercase().contains(query)) &&
+                (!bookmarksOnly || it.bookmarked)
         }
         adapter.submit(entries)
         emptyText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
-        val hasSession = getSharedPreferences("editnote_session", MODE_PRIVATE)
-            .getString("docs", "")?.isNotBlank() == true
-        resumeButton.visibility =
-            if (hasSession && AppSettings(this).resumeSession) View.VISIBLE else View.GONE
+        if (entries.isEmpty()) {
+            emptyText.text = if (bookmarksOnly) {
+                "No bookmarks yet.\nTap the star on a file to bookmark it."
+            } else {
+                "No files yet.\nTap + to create a new file, or open one from your device."
+            }
+        }
     }
+
+    /** Reset is destructive, so it asks first (KiA, item 36) — in a
+     *  card window in the app's own design, not a stock dialog. Only
+     *  the recent list is cleared; files and bookmarks stay. */
+    private fun confirmResetList() {
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val dialog = Dialog(this)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = palette.cardDrawable(20f, density)
+            setPadding(dp(22), dp(20), dp(22), dp(16))
+            addView(TextView(this@MainActivity).apply {
+                text = "Reset the recent list?"
+                textSize = 17f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(palette.textPrimary)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "This clears the list of recently opened files. " +
+                    "Your files and bookmarks are not touched."
+                textSize = 14f
+                setTextColor(palette.textSecondary)
+                setPadding(0, dp(8), 0, 0)
+            })
+            val buttons = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.END
+                setPadding(0, dp(18), 0, 0)
+                addView(TextView(this@MainActivity).apply {
+                    text = "Cancel"
+                    textSize = 15f
+                    setTextColor(palette.textPrimary)
+                    val ripple = android.util.TypedValue()
+                    theme.resolveAttribute(
+                        android.R.attr.selectableItemBackground, ripple, true
+                    )
+                    setBackgroundResource(ripple.resourceId)
+                    setPadding(dp(16), dp(10), dp(16), dp(10))
+                    setOnClickListener { dialog.dismiss() }
+                })
+                addView(Button(this@MainActivity).apply {
+                    text = "Reset"
+                    textSize = 15f
+                    isAllCaps = false
+                    // Accent-filled pill (pillDrawable is the soft alt
+                    // fill — onAccent text would vanish on it).
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        cornerRadius = 24f * density
+                        setColor(palette.accent)
+                    }
+                    setTextColor(palette.onAccent)
+                    setPadding(dp(22), 0, dp(22), 0)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, dp(42)
+                    ).apply { marginStart = dp(10) }
+                    setOnClickListener {
+                        dialog.dismiss()
+                        recents.clear()
+                        refresh()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Recent list cleared (bookmarks kept)",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                })
+            }
+            addView(buttons)
+        }
+        dialog.setContentView(card)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.88).toInt(),
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
+        dialog.show()
+    }
+
+    private var bookmarksOnly = false
 
     private var speedDialOpen = false
 
@@ -368,8 +466,23 @@ class MainActivity : Activity() {
             val title = view.findViewById<TextView>(R.id.noteTitle)
             val preview = view.findViewById<TextView>(R.id.notePreview)
             val meta = view.findViewById<TextView>(R.id.noteMeta)
-            title.text = (if (entry.bookmarked) "★ " else "") + entry.name
+            title.text = entry.name
             title.setTextColor(palette.textPrimary)
+            // Visible bookmark star (KiA, item 38: bookmarks existed in
+            // the data layer and a long-press menu, but with nothing on
+            // the row the feature was undiscoverable). Bookmarked files
+            // pin to the top and survive a list reset.
+            val star = view.findViewById<ImageButton>(R.id.btnBookmark)
+            star.setImageResource(
+                if (entry.bookmarked) R.drawable.ic_star else R.drawable.ic_star_outline
+            )
+            star.setColorFilter(
+                if (entry.bookmarked) palette.accent else palette.textSecondary
+            )
+            star.setOnClickListener {
+                recents.setBookmarked(entry.uri, !entry.bookmarked)
+                refresh()
+            }
             preview.text = "Device file"
             preview.setTextColor(palette.textSecondary)
             meta.text = if (entry.lastOpened > 0) {

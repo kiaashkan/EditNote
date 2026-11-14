@@ -108,9 +108,9 @@ class SettingsActivity : Activity() {
             AppSettings.ACCENT_ORANGE to "Orange",
             AppSettings.ACCENT_MONO to "Black / White",
             AppSettings.ACCENT_GREEN to "Green",
-            AppSettings.ACCENT_BLUE to "Blue",
+            AppSettings.ACCENT_BLUE to "Pink",
             AppSettings.ACCENT_PURPLE to "Purple",
-            AppSettings.ACCENT_TEAL to "Teal"
+            AppSettings.ACCENT_TEAL to "Cream"
         )
         fun refreshAccentLabel() {
             accentLabel.text = names[settings.accent] ?: "Orange"
@@ -272,7 +272,6 @@ class SettingsActivity : Activity() {
         }
 
         bindCheck(R.id.checkTypeFilter, settings.fileTypeFilter) { settings.fileTypeFilter = it }
-        bindCheck(R.id.checkResume, settings.resumeSession) { settings.resumeSession = it }
     }
 
     /** Single-choice list for the value rows (KiA, items 27+32: a list,
