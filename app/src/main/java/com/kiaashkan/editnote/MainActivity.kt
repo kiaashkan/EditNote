@@ -75,7 +75,8 @@ class MainActivity : Activity() {
         val fab = findViewById<Button>(R.id.btnFab)
         fab.background = palette.ovalDrawable(palette.accent)
         fab.setTextColor(palette.onAccent)
-        fab.setOnClickListener { showActionSheet() }
+        fab.setOnClickListener { toggleSpeedDial() }
+        setupSpeedDial()
 
         resumeButton = findViewById(R.id.btnResume)
         resumeButton.setOnClickListener {
@@ -135,61 +136,70 @@ class MainActivity : Activity() {
         menu.show()
     }
 
-    /** Slide-up panel from the "+" button: create a new file, or open one. */
-    private fun showActionSheet() {
-        val dialog = android.app.Dialog(this, R.style.Dialog_SlideUp)
-        val view = layoutInflater.inflate(R.layout.sheet_main_actions, null)
+    private var speedDialOpen = false
+
+    /** Two small actions that pop up right above the "+" button. */
+    private fun setupSpeedDial() {
         val density = resources.displayMetrics.density
-        view.findViewById<View>(R.id.sheetRoot).background =
-            palette.cardDrawable(18f, density)
-        view.findViewById<TextView>(R.id.sheetTitle).setTextColor(palette.textPrimary)
-        fun roundedTile(color: Int, alpha: Int): android.graphics.drawable.GradientDrawable =
-            android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                cornerRadius = 14f * density
-                setColor(
-                    android.graphics.Color.argb(
-                        alpha,
-                        android.graphics.Color.red(color),
-                        android.graphics.Color.green(color),
-                        android.graphics.Color.blue(color)
-                    )
-                )
-            }
-        val newRow = view.findViewById<View>(R.id.sheetNew)
-        newRow.background = palette.cardDrawable(16f, density)
-        view.findViewById<View>(R.id.sheetNewTile).background =
-            roundedTile(palette.accent, 255)
-        view.findViewById<TextView>(R.id.sheetNewTitle).setTextColor(palette.textPrimary)
-        view.findViewById<TextView>(R.id.sheetNewSub).setTextColor(palette.textSecondary)
-        newRow.setOnClickListener {
-            dialog.dismiss()
-            promptNewFile()
+        val newLabel = findViewById<TextView>(R.id.speedNewLabel)
+        val openLabel = findViewById<TextView>(R.id.speedOpenLabel)
+        for (label in listOf(newLabel, openLabel)) {
+            label.background = palette.cardDrawable(18f, density)
+            label.setTextColor(palette.textPrimary)
         }
-        val openRow = view.findViewById<View>(R.id.sheetOpen)
-        openRow.background = palette.cardDrawable(16f, density)
-        view.findViewById<View>(R.id.sheetOpenTile).background =
-            roundedTile(palette.accent, 36)
-        view.findViewById<android.widget.ImageView>(R.id.sheetOpenIcon)
-            .setColorFilter(palette.accent)
-        view.findViewById<TextView>(R.id.sheetOpenTitle).setTextColor(palette.textPrimary)
-        view.findViewById<TextView>(R.id.sheetOpenSub).setTextColor(palette.textSecondary)
-        openRow.setOnClickListener {
-            dialog.dismiss()
+        val newBtn = findViewById<ImageButton>(R.id.speedNew)
+        newBtn.background = palette.ovalDrawable(palette.accent)
+        newBtn.setColorFilter(palette.onAccent)
+        val openBtn = findViewById<ImageButton>(R.id.speedOpen)
+        openBtn.background = palette.ovalDrawable(palette.card)
+        openBtn.setColorFilter(palette.accent)
+        val openAction = {
+            closeSpeedDial()
             pickExternalFile()
         }
-        val cancelBtn = view.findViewById<Button>(R.id.sheetCancel)
-        cancelBtn.setTextColor(palette.textSecondary)
-        cancelBtn.setOnClickListener { dialog.dismiss() }
-        dialog.setContentView(view)
-        dialog.window?.let { window ->
-            window.setLayout(
-                android.view.WindowManager.LayoutParams.MATCH_PARENT,
-                android.view.WindowManager.LayoutParams.WRAP_CONTENT
-            )
-            window.setGravity(android.view.Gravity.BOTTOM)
+        val newAction = {
+            closeSpeedDial()
+            promptNewFile()
         }
-        dialog.show()
+        newBtn.setOnClickListener { newAction() }
+        newLabel.setOnClickListener { newAction() }
+        openBtn.setOnClickListener { openAction() }
+        openLabel.setOnClickListener { openAction() }
+        findViewById<View>(R.id.speedScrim).setOnClickListener { closeSpeedDial() }
+    }
+
+    private fun toggleSpeedDial() {
+        if (speedDialOpen) closeSpeedDial() else openSpeedDial()
+    }
+
+    private fun openSpeedDial() {
+        speedDialOpen = true
+        val dial = findViewById<View>(R.id.speedDial)
+        findViewById<View>(R.id.speedScrim).visibility = View.VISIBLE
+        dial.visibility = View.VISIBLE
+        dial.alpha = 0f
+        dial.translationY = 14f * resources.displayMetrics.density
+        dial.animate().alpha(1f).translationY(0f).setDuration(160).start()
+        findViewById<Button>(R.id.btnFab).animate().rotation(45f).setDuration(160).start()
+    }
+
+    private fun closeSpeedDial() {
+        if (!speedDialOpen) return
+        speedDialOpen = false
+        val dial = findViewById<View>(R.id.speedDial)
+        dial.animate().alpha(0f)
+            .setDuration(120)
+            .withEndAction {
+                dial.visibility = View.GONE
+                findViewById<View>(R.id.speedScrim).visibility = View.GONE
+            }
+            .start()
+        findViewById<Button>(R.id.btnFab).animate().rotation(0f).setDuration(160).start()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (speedDialOpen) closeSpeedDial() else super.onBackPressed()
     }
 
     private fun promptNewFile() {

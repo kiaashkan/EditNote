@@ -1,12 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Slide-up panel (used for the home screen "+" action sheet) -->
-    <style name="Dialog.SlideUp" parent="android:Theme.Material.Dialog.NoActionBar">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowEnterAnimation">@anim/slide_up</item>
-        <item name="android:windowExitAnimation">@anim/slide_down</item>
-    </style>
-
     <!-- Base name kept for the manifest; ThemeHelper picks the exact
          Light/Dark + accent style at runtime, so EVERY framework control
          (checkboxes, radios, seek bars, dialogs, cursor) follows the

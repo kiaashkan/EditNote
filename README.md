@@ -34,7 +34,7 @@ important hides inside the app.
 
 **Home**
 - Recent device files with bookmarks, search, sort A–Z, clear history
-- Floating **+** button with a slide-up panel: create a new file or open one
+- Floating **+** button: two small actions (New file, Open a file) pop up right above it
 - Resume last session with the same tabs
 
 **Settings**

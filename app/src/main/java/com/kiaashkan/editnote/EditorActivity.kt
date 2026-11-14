@@ -400,20 +400,48 @@ class EditorActivity : Activity() {
         val signature = docs.joinToString("|") { "${it.name}:${it.dirty}" } + "@$active"
         if (signature == lastTabSignature) return
         lastTabSignature = signature
+        // The tab strip only earns its space with more than one file open;
+        // a single giant chip under the title was the "orange brick" KiA
+        // flagged as ugly. With one document the header already names it.
+        (tabStrip.parent as? View)?.visibility =
+            if (docs.size > 1) View.VISIBLE else View.GONE
         tabStrip.removeAllViews()
         val density = resources.displayMetrics.density
         docs.forEachIndexed { index, doc ->
-            val chip = Button(this).apply {
-                text = (if (doc.dirty) "* " else "") + doc.name.removeSuffix(".txt")
-                isAllCaps = false
+            val isActive = index == active
+            val fg = if (isActive) palette.onAccent else palette.textPrimary
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = palette.chipDrawable(isActive, density)
                 setPadding(
-                    (14 * density).toInt(), (6 * density).toInt(),
-                    (14 * density).toInt(), (6 * density).toInt()
+                    (12 * density).toInt(), (7 * density).toInt(),
+                    if (isActive) (6 * density).toInt() else (12 * density).toInt(),
+                    (7 * density).toInt()
                 )
-                background = palette.chipDrawable(index == active, density)
-                setTextColor(
-                    if (index == active) palette.onAccent else palette.textPrimary
-                )
+                val nameView = TextView(this@EditorActivity).apply {
+                    text = (if (doc.dirty) "• " else "") +
+                        doc.name.removeSuffix(".txt")
+                    textSize = 13.5f
+                    setTextColor(fg)
+                    isSingleLine = true
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    maxWidth = (170 * density).toInt()
+                }
+                addView(nameView)
+                if (isActive) {
+                    val closeView = TextView(this@EditorActivity).apply {
+                        text = "✕"
+                        textSize = 11f
+                        setTextColor(fg)
+                        setPadding(
+                            (8 * density).toInt(), 0,
+                            (5 * density).toInt(), 0
+                        )
+                        setOnClickListener { closeTab(index) }
+                    }
+                    addView(closeView)
+                }
                 setOnClickListener { switchTo(index) }
                 setOnLongClickListener {
                     closeTab(index)
@@ -425,15 +453,6 @@ class EditorActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { marginEnd = (8 * density).toInt() }
             tabStrip.addView(chip, params)
-        }
-        if (docs.size > 1) {
-            val hint = TextView(this).apply {
-                text = "  long-press a tab to close it"
-                setTextColor(palette.textSecondary)
-                textSize = 11f
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            tabStrip.addView(hint)
         }
     }
 
