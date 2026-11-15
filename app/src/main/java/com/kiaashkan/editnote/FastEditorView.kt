@@ -26,7 +26,9 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -795,6 +797,13 @@ class FastEditorView @JvmOverloads constructor(
         if (!scroller.isFinished) scroller.forceFinished(true)
     }
 
+    // True while the current touch gesture is a scroll-stop (items
+    // 89+90): it began while a fling was running, or a fling is still
+    // running now. Such a gesture may ONLY stop the scroll — tap
+    // callbacks check this and do nothing else.
+    private fun isFlingStopGesture(): Boolean =
+        downStoppedFling || !scroller.isFinished
+
     fun scrollToY(y: Int) {
         val clamped = y.coerceIn(0, maxScrollY())
         if (clamped != scrollYPos) {
@@ -1244,6 +1253,20 @@ class FastEditorView @JvmOverloads constructor(
     // ------------------------------------------------------------------
     private var draggingHandle: Int = 0 // 0 none, 1 start, 2 end
     private var actionMode: ActionMode? = null
+    // True when the current touch gesture began by stopping a fling
+    // (item 89): that tap only stops the scroll — it must not pop the
+    // keyboard; the next tap opens it.
+    private var downStoppedFling = false
+    // Item 91: a fling-stop gesture is run by the view itself, not by
+    // GestureDetector — once the detector's long-press state engages
+    // (a grab-and-hold crosses the timeout) it suppresses scrolling
+    // for the rest of the gesture, so the grab could never drag.
+    // While grabActive, MOVE scrolls 1:1 with the finger and a
+    // VelocityTracker provides the release fling.
+    private var grabActive = false
+    private var grabLastX = 0f
+    private var grabLastY = 0f
+    private var velocityTracker: VelocityTracker? = null
 
     private val gestureDetector = GestureDetector(
         context,
@@ -1272,13 +1295,17 @@ class FastEditorView @JvmOverloads constructor(
             ): Boolean {
                 val maxY = maxScrollY()
                 if (maxY > 0) {
-                    // KiA wants travel FAST: feed the fling 1.3x the
-                    // finger's velocity. The engine's per-frame cost
-                    // is bounded (visible lines only), so it can take
-                    // the speed.
+                    // Platform physics, lightly damped (items 88+89
+                    // test round): item 52's 1.3x boost made the
+                    // glide travel ~1.7x farther than any native app
+                    // (distance grows with v^2) — slippery and out of
+                    // control. Raw velocity was close, but KiA still
+                    // found the glide a touch fast, so the measured
+                    // velocity is scaled by 0.85: peak speed -15%,
+                    // travel ~-28%, same native friction curve.
                     scroller.fling(
                         scrollXPos, scrollYPos,
-                        (-velocityX * 1.3f).toInt(), (-velocityY * 1.3f).toInt(),
+                        (-velocityX * 0.85f).toInt(), (-velocityY * 0.85f).toInt(),
                         0, maxScrollX(), 0, maxY
                     )
                     invalidate()
@@ -1287,6 +1314,15 @@ class FastEditorView @JvmOverloads constructor(
             }
 
             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (isFlingStopGesture()) {
+                    // This touch ONLY stops the scroll (items 89+90):
+                    // no caret move, no keyboard, nothing else. The
+                    // next touch behaves as a normal tap.
+                    stopFling()
+                    downStoppedFling = false
+                    actionMode?.finish()
+                    return true
+                }
                 requestFocus()
                 val off = offsetAtPoint(e.x, e.y)
                 setSelection(off)
@@ -1296,6 +1332,7 @@ class FastEditorView @JvmOverloads constructor(
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (isFlingStopGesture()) return true
                 val off = offsetAtPoint(e.x, e.y)
                 val (a, b) = wordBounds(off)
                 if (b > a) {
@@ -1306,6 +1343,7 @@ class FastEditorView @JvmOverloads constructor(
             }
 
             override fun onLongPress(e: MotionEvent) {
+                if (isFlingStopGesture()) return
                 val off = offsetAtPoint(e.x, e.y)
                 val (a, b) = wordBounds(off)
                 if (b > a) setSelection(a, b) else setSelection(off)
@@ -1317,11 +1355,49 @@ class FastEditorView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // A touch during a fling stops the glide dead,
+                // exactly where the content is on screen (item 88 —
+                // native ListView/EditText parity; before this, only
+                // onScroll stopped it, after the finger had already
+                // moved past the touch slop, so the text kept running
+                // away under a grab-and-hold touch).
+                downStoppedFling = !scroller.isFinished
+                stopFling()
                 // Handle drags take precedence near selection ends.
                 draggingHandle = handleAt(event.x, event.y)
                 if (draggingHandle != 0) return true
+                if (downStoppedFling) {
+                    // Grab the moving content (item 91): this view
+                    // runs the gesture itself from here — the finger
+                    // can drag the stopped content, and no tap
+                    // consequence (caret, keyboard, selection) can
+                    // fire for this gesture.
+                    grabActive = true
+                    grabLastX = event.x
+                    grabLastY = event.y
+                    velocityTracker?.recycle()
+                    velocityTracker = VelocityTracker.obtain()
+                    velocityTracker?.addMovement(event)
+                    return true
+                }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (grabActive) {
+                    velocityTracker?.addMovement(event)
+                    val dx = grabLastX - event.x
+                    val dy = grabLastY - event.y
+                    grabLastX = event.x
+                    grabLastY = event.y
+                    scrollYPos = (scrollYPos + dy.toInt())
+                        .coerceIn(0, maxScrollY())
+                    if (!wordWrap) {
+                        scrollXPos = (scrollXPos + dx.toInt())
+                            .coerceIn(0, maxScrollX())
+                    }
+                    onScrollChanged?.invoke()
+                    invalidate()
+                    return true
+                }
                 if (draggingHandle != 0) {
                     val off = offsetAtPoint(event.x, event.y)
                     if (draggingHandle == 1) {
@@ -1344,6 +1420,35 @@ class FastEditorView @JvmOverloads constructor(
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (grabActive) {
+                    grabActive = false
+                    if (event.actionMasked == MotionEvent.ACTION_UP) {
+                        // A fast grab-release keeps gliding, with
+                        // the same 0.85 calibration as onFling.
+                        velocityTracker?.addMovement(event)
+                        val vc = ViewConfiguration.get(context)
+                        velocityTracker?.computeCurrentVelocity(
+                            1000, vc.scaledMaximumFlingVelocity.toFloat()
+                        )
+                        val vx = velocityTracker?.xVelocity ?: 0f
+                        val vy = velocityTracker?.yVelocity ?: 0f
+                        if (abs(vx) > vc.scaledMinimumFlingVelocity ||
+                            abs(vy) > vc.scaledMinimumFlingVelocity
+                        ) {
+                            scroller.fling(
+                                scrollXPos, scrollYPos,
+                                (-vx * 0.85f).toInt(),
+                                (-vy * 0.85f).toInt(),
+                                0, maxScrollX(), 0, maxScrollY()
+                            )
+                            invalidate()
+                        }
+                    }
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    downStoppedFling = false
+                    return true
+                }
                 if (draggingHandle != 0) {
                     draggingHandle = 0
                     if (selStart != selEnd) startTextActionMode()
@@ -1351,6 +1456,10 @@ class FastEditorView @JvmOverloads constructor(
                 }
             }
         }
+        // Any other event of a grab gesture (extra pointers and the
+        // like) is consumed here too — GestureDetector never sees a
+        // grab, so its long-press state cannot engage mid-grab.
+        if (grabActive) return true
         return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
     }
 

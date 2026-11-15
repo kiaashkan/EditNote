@@ -41,12 +41,10 @@ class SettingsActivity : Activity() {
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finish() }
 
-        // About card: rounded card background + tappable GitHub rows.
+        // About card: rounded card background + tappable rows. (KiA's
+        // personal GitHub profile row was removed — item 92.)
         findViewById<LinearLayout>(R.id.aboutCard).background =
             palette.cardDrawable(16f, resources.displayMetrics.density)
-        findViewById<LinearLayout>(R.id.aboutGithub).setOnClickListener {
-            openUrl("https://github.com/kiaashkan")
-        }
         // Update row (KiA, item 21): EditNote keeps ZERO permissions, so
         // updating opens the latest GitHub release in the browser instead
         // of downloading in-app.

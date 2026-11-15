@@ -56,11 +56,11 @@ important hides inside the app.
 - Floating **+** button: two small actions (New file, Open a file) pop up right above it
 
 **Settings**
-- A modern grouped-cards layout with switches; an About card with the
-  maker's GitHub, an **Update EditNote** row that opens the latest
-  GitHub release (the app still requests zero permissions, so updates
-  happen in your browser), and a **Report a bug** row that opens your
-  mail app addressed to the maker
+- A modern grouped-cards layout with switches; an About card with an
+  **Update EditNote** row that opens the latest GitHub release (the
+  app still requests zero permissions, so updates happen in your
+  browser), and a **Report a bug** row that opens your mail app
+  addressed to the maker
 - Theme (System / Light / Dark) and accent colors (Orange by default, plus
   Black/White that adapts to the theme, Green, Pink, Purple, Cream) — every
   control in the app follows the chosen color
@@ -127,3 +127,4 @@ to support its development, you can donate here:
 UQB6Wphj-CHN1kSwU5fzgMUval6SdJljEhX-52q5qP-yKbTg
 ```
 
+Thank you! ❤️
