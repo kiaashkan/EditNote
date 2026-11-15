@@ -120,6 +120,8 @@ object CardDialogs {
             addView(row)
         }
         dialog.setContentView(card)
+        // Dialogs never mirror either (item 95).
+        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setLayout(
             (activity.resources.displayMetrics.widthPixels * 0.9).toInt(),
@@ -234,6 +236,8 @@ object CardDialogs {
             addView(scroll)
         }
         dialog.setContentView(card)
+        // Dialogs never mirror either (item 95).
+        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setLayout(
             (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),

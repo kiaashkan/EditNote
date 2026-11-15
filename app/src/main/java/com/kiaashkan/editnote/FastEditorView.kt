@@ -739,11 +739,14 @@ class FastEditorView @JvmOverloads constructor(
         val layout = StaticLayout.Builder
             .obtain(text, 0, text.length, paintForLine, availNow)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            // Explicit paragraph direction (item 82): the first
-            // strong character decides, exactly like a TextView —
-            // Persian/Arabic lines become RTL paragraphs, mixed
-            // lines follow the Unicode bidi algorithm.
-            .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
+            // Paragraph base direction is ALWAYS LTR (item 93,
+            // superseding item 82's FIRSTSTRONG_LTR): every line —
+            // Persian included — anchors at the left margin, the
+            // code-editor convention KiA asked for ("like
+            // QuickEdit"). The Unicode bidi algorithm still orders
+            // and joins RTL runs correctly inside the line; only
+            // the paragraph's anchor direction is fixed.
+            .setTextDirection(TextDirectionHeuristics.LTR)
             .setLineSpacing(lineSpacingAddPx, lineSpacingMult)
             .setIncludePad(false)
             .build()

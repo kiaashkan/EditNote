@@ -2,6 +2,7 @@ package com.kiaashkan.editnote
 
 import android.app.Activity
 import android.os.Bundle
+import android.view.View
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -23,6 +24,8 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
+        // The app never mirrors (item 95) — see MainActivity.
+        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         setContentView(R.layout.activity_settings)
         settings = AppSettings(this)
         palette = Palette(this)
@@ -351,6 +354,8 @@ class SettingsActivity : Activity() {
             addView(scroll)
         }
         dialog.setContentView(card)
+        // Dialogs never mirror either (item 95).
+        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         )

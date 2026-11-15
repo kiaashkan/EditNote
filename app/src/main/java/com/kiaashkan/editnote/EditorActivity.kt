@@ -201,6 +201,8 @@ class EditorActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
+        // The app never mirrors (item 95) — see MainActivity.
+        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         setContentView(R.layout.activity_editor)
         settings = AppSettings(this)
         palette = Palette(this)
@@ -213,6 +215,11 @@ class EditorActivity : Activity() {
         fastScroll.editor = editor
         fastScroll.accentColor = palette.accent
         titleView = findViewById(R.id.fileTitle)
+        // Persian file names anchor left (item 94) — forced in code
+        // too, not just XML: on KiA's Persian-locale phone the XML
+        // textDirection alone did not take effect.
+        titleView.textDirection = View.TEXT_DIRECTION_LTR
+        titleView.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
         statusView = findViewById(R.id.saveStatus)
         tabStrip = findViewById(R.id.tabStrip)
         accessoryScroll = findViewById(R.id.accessoryScroll)
@@ -544,7 +551,9 @@ class EditorActivity : Activity() {
         editedSinceBaseline = false
         redoStack.clear()
         updateUndoRedoButtons()
-        titleView.text = doc.name
+        // Leading LRM pins Persian names to the left (item 94) —
+        // see MainActivity's recents binding.
+        titleView.text = "\u200E" + doc.name
         when {
             doc.pendingLoad -> statusView.text = "Loading…"
             doc.needsDestination && doc.text.isNotBlank() ->
@@ -692,7 +701,10 @@ class EditorActivity : Activity() {
                     val label = if (docs.size > 1 && baseName.length > 7) {
                         baseName.take(7) + "…"
                     } else baseName
-                    text = (if (doc.dirty) "• " else "") + label
+                    text = (if (doc.dirty) "• " else "") + "\u200E" + label
+                    // File names always read LTR (item 94), even
+                    // Persian ones — same rule as the editor (93).
+                    textDirection = View.TEXT_DIRECTION_LTR
                     textSize = 13.5f
                     if (isActive) {
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -1973,7 +1985,7 @@ class EditorActivity : Activity() {
                     doc.draftFile = null
                     RecentFiles(this).add(uri, doc.name)
                     if (doc === docs.getOrNull(active)) {
-                        titleView.text = doc.name
+                        titleView.text = "\u200E" + doc.name
                         setStatusSaved()
                     }
                     renderTabs()

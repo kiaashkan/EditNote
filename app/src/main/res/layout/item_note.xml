@@ -64,6 +64,8 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:singleLine="true"
+                android:textAlignment="viewStart"
+                android:textDirection="ltr"
                 android:textSize="17sp"
                 android:textStyle="bold" />
 

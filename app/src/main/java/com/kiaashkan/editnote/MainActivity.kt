@@ -46,6 +46,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
+        // The app never mirrors (item 95): with supportsRtl=false
+        // plus this, an RTL-locale phone (Persian/Arabic system
+        // language) gets the exact same LTR layout as everyone else.
+        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         setContentView(R.layout.activity_main)
         recents = RecentFiles(this)
         palette = Palette(this)
@@ -289,6 +293,8 @@ class MainActivity : Activity() {
             addView(buttons)
         }
         dialog.setContentView(card)
+        // Dialogs never mirror either (item 95).
+        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         )
@@ -431,6 +437,8 @@ class MainActivity : Activity() {
         }
         val dialog = android.app.Dialog(this)
         dialog.setContentView(card)
+        // Dialogs never mirror either (item 95).
+        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         )
@@ -579,9 +587,20 @@ class MainActivity : Activity() {
                 palette.cardDrawable(density = resources.displayMetrics.density)
             bindSwipe(view, card, entry)
             val title = view.findViewById<TextView>(R.id.noteTitle)
+            // Persian names anchor left (item 94) — forced in code at
+            // bind time: XML textDirection alone did not take effect
+            // on KiA's Persian-locale phone.
+            title.textDirection = View.TEXT_DIRECTION_LTR
+            title.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
             val preview = view.findViewById<TextView>(R.id.notePreview)
             val meta = view.findViewById<TextView>(R.id.noteMeta)
-            title.text = entry.name
+            // A leading LEFT-TO-RIGHT MARK pins the name's paragraph
+            // direction at the string level (item 94, final form):
+            // KiA's phone renders a Persian-first name as an RTL
+            // paragraph despite the view's LTR direction settings —
+            // the mark makes the first strong character LTR, so the
+            // name anchors left under any direction heuristic.
+            title.text = "\u200E" + entry.name
             title.setTextColor(palette.textPrimary)
             // Visible bookmark star (KiA, item 38: bookmarks existed in
             // the data layer and a long-press menu, but with nothing on
