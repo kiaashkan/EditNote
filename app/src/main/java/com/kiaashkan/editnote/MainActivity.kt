@@ -70,10 +70,8 @@ class MainActivity : Activity() {
         adapter.onOpen = { entry ->
             startActivity(EditorActivity.externalIntent(this, Uri.parse(entry.uri), entry.name))
         }
-        adapter.onActions = { entry -> showEntryActions(entry) }
-        // Swipe-delete (item 80): same removal as the picker's
-        // "Remove from list" — the entry leaves Recents; the file
-        // itself stays on the device.
+        // Swipe-delete (item 80): the entry leaves Recents; the
+        // file itself stays on the device.
         adapter.onRemove = { entry ->
             recents.remove(entry.uri)
             refresh()
@@ -479,29 +477,6 @@ class MainActivity : Activity() {
         input.requestFocus()
     }
 
-    private fun showEntryActions(entry: RecentFiles.Entry) {
-        val items = listOf(
-            "Open",
-            if (entry.bookmarked) "Remove bookmark" else "Bookmark",
-            "Remove from list"
-        )
-        CardDialogs.picker(this, palette, entry.name, items, current = -1) { which ->
-            when (which) {
-                0 -> startActivity(
-                    EditorActivity.externalIntent(this, Uri.parse(entry.uri), entry.name)
-                )
-                1 -> {
-                    recents.setBookmarked(entry.uri, !entry.bookmarked)
-                    refresh()
-                }
-                2 -> {
-                    recents.remove(entry.uri)
-                    refresh()
-                }
-            }
-        }
-    }
-
     private fun pickExternalFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -540,7 +515,6 @@ class MainActivity : Activity() {
     private inner class RecentAdapter : BaseAdapter() {
 
         var onOpen: ((RecentFiles.Entry) -> Unit)? = null
-        var onActions: ((RecentFiles.Entry) -> Unit)? = null
         var onRemove: ((RecentFiles.Entry) -> Unit)? = null
 
         // Swipe-to-delete state (item 80): at most one row is open.
@@ -548,12 +522,22 @@ class MainActivity : Activity() {
         private val swipeActionDp = 84f
         private var openUri: String? = null
         private var openCard: View? = null
+        // Item 85: the harsh pure red clashed with the app and its
+        // 84dp-only rect peeked out from under the card's rounded
+        // corners. The under-layer is now the app's own accent with
+        // the card's hairline border, drawn on a full-size rect
+        // congruent with the card (see item_note.xml).
         private val deleteDrawable by lazy {
             GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius =
                     16f * resources.displayMetrics.density
-                setColor(Color.rgb(198, 40, 40))
+                setColor(palette.accent)
+                setStroke(
+                    (1 * resources.displayMetrics.density)
+                        .toInt().coerceAtLeast(1),
+                    palette.border
+                )
             }
         }
 
@@ -620,10 +604,8 @@ class MainActivity : Activity() {
                 if (openUri == entry.uri) closeOpenSwipe()
                 else onOpen?.invoke(entry)
             }
-            view.setOnLongClickListener {
-                onActions?.invoke(entry)
-                true
-            }
+            // No long-press menu (KiA, item 84: removed — Open is a
+            // tap, bookmark is the star, removal is the swipe).
             preview.text = "Device file"
             preview.setTextColor(palette.textSecondary)
             meta.text = if (entry.lastOpened > 0) {
@@ -655,10 +637,17 @@ class MainActivity : Activity() {
             delete.background = deleteDrawable
             row.findViewById<android.widget.ImageView>(
                 R.id.swipeDeleteIcon
-            ).setColorFilter(Color.WHITE)
-            delete.setOnClickListener {
-                if (openUri == entry.uri) onRemove?.invoke(entry)
-            }
+            ).setColorFilter(palette.onAccent)
+            row.findViewById<TextView>(R.id.swipeDeleteLabel)
+                .setTextColor(palette.onAccent)
+            // Item 86: the under-layer must NEVER consume touches.
+            // Its click listener made it clickable, and once the
+            // layer became full-size (item 85) it swallowed every
+            // tap and swipe on the row — nothing opened and nothing
+            // swiped (KiA's v1.4.4 test). The Delete-strip tap is
+            // detected in the row's touch listener below instead.
+            delete.isClickable = false
+            delete.isFocusable = false
             // Recycling: a reused row shows its entry's swipe state.
             card.animate().cancel()
             card.translationX = if (entry.uri == openUri) {
@@ -715,6 +704,16 @@ class MainActivity : Activity() {
                                     .setDuration(180).start()
                             }
                             mode = 0
+                            true
+                        } else if (
+                            ev.actionMasked == MotionEvent.ACTION_UP &&
+                            openUri == entry.uri &&
+                            ev.x >= v.width - actionW
+                        ) {
+                            // Item 86: a tap on the exposed Delete
+                            // strip of the swipe-open row (the layer
+                            // itself no longer takes clicks).
+                            onRemove?.invoke(entry)
                             true
                         } else false
                     }

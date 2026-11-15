@@ -5,32 +5,41 @@
     android:paddingTop="6dp"
     android:paddingBottom="6dp">
 
-    <!-- Delete action (item 80): sits behind the card and is revealed
-         by swiping the card to the left. Its width (84dp) is mirrored
-         by swipeActionDp in MainActivity's adapter. -->
-    <LinearLayout
+    <!-- Delete under-layer (item 80, geometry fixed item 85): a
+         full-size rounded rect EXACTLY congruent with the card
+         above it, so at rest the card's corner notches show this
+         layer's identical notches (page background), never a sliver
+         of colour; swiping the card left reveals the action strip
+         anchored in its right 84dp (mirrored by swipeActionDp in
+         MainActivity's adapter). -->
+    <FrameLayout
         android:id="@+id/swipeDelete"
-        android:layout_width="84dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="end"
-        android:gravity="center"
-        android:orientation="vertical">
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
 
-        <ImageView
-            android:id="@+id/swipeDeleteIcon"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:contentDescription="Delete"
-            android:src="@drawable/ic_trash" />
+        <LinearLayout
+            android:layout_width="84dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:gravity="center"
+            android:orientation="vertical">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Delete"
-            android:textColor="@android:color/white"
-            android:textSize="12sp" />
-    </LinearLayout>
+            <ImageView
+                android:id="@+id/swipeDeleteIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:contentDescription="Delete"
+                android:src="@drawable/ic_trash" />
+
+            <TextView
+                android:id="@+id/swipeDeleteLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Delete"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/noteCard"

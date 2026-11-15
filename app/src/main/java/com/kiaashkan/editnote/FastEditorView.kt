@@ -61,6 +61,13 @@ class FastEditorView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : View(context, attrs), FastEditorView.ScrollSurface {
 
+    companion object {
+        // Build width for no-wrap line layouts (item 87 — see
+        // layoutForLine): wide enough for any realistic line,
+        // small enough to keep the native shaper correct.
+        const val NO_WRAP_LAYOUT_WIDTH = 1_000_000
+    }
+
     /** Surface the fast-scroll handle drives (replaces its EditText). */
     interface ScrollSurface {
         val scrollPosY: Int
@@ -127,7 +134,7 @@ class FastEditorView @JvmOverloads constructor(
     fun setTextContent(s: String) {
         stopFling()
         buffer.setLength(0)
-        buffer.append(s)
+        buffer.append(normalizeArabicForms(s))
         rebuildLineIndex()
         selStart = 0
         selEnd = 0
@@ -148,7 +155,42 @@ class FastEditorView @JvmOverloads constructor(
      * actually the activity's listener checks its own flag; this view
      * always reports).
      */
-    fun replaceRange(start: Int, end: Int, ins: String) {
+    /**
+     * Item 83: some keyboards deliver Arabic-script text to a
+     * custom editor as PRE-SHAPED Presentation Forms (U+FB1D–FDFF,
+     * U+FE70–FEFF) — a legacy fallback for editors that don't look
+     * like full text editors. Those codepoints can never join in
+     * ANY renderer, so Persian/Arabic shows letter-by-letter even
+     * though the platform shaper is fine (it worked in the old
+     * EditText app, whose real InputConnection got standard text).
+     * NFKC maps each form back to its standard letter — lossless —
+     * so normalizing at every text-entry point restores real text.
+     * Characters outside those blocks pass through untouched.
+     */
+    private fun normalizeArabicForms(s: String): String {
+        var needs = false
+        for (ch in s) {
+            if (ch.code in 0xFB1D..0xFDFF || ch.code in 0xFE70..0xFEFF) {
+                needs = true
+                break
+            }
+        }
+        if (!needs) return s
+        val out = StringBuilder(s.length)
+        for (ch in s) {
+            if (ch.code in 0xFB1D..0xFDFF || ch.code in 0xFE70..0xFEFF) {
+                out.append(
+                    java.text.Normalizer.normalize(
+                        ch.toString(), java.text.Normalizer.Form.NFKC
+                    )
+                )
+            } else out.append(ch)
+        }
+        return out.toString()
+    }
+
+    fun replaceRange(start: Int, end: Int, rawIns: String) {
+        val ins = normalizeArabicForms(rawIns)
         val a = start.coerceIn(0, buffer.length)
         val b = end.coerceIn(a, buffer.length)
         if (a == b && ins.isEmpty()) return
@@ -561,7 +603,14 @@ class FastEditorView @JvmOverloads constructor(
             (width - gutterWidthPx() - paddingLeft - paddingRight)
                 .coerceAtLeast(1)
         } else {
-            Int.MAX_VALUE / 2
+            // No-wrap lines build at a wide but SANE width
+            // (item 87): the old Int.MAX_VALUE / 2 (~1.07e9 px)
+            // silently breaks cursive shaping in Android's
+            // native layout engine — Persian/Arabic letters come
+            // out isolated. Proven in an emulator matrix test:
+            // width 1,000,000 shapes correctly, 2^30 does not.
+            // 1M px still fits ~100K monospace chars per line.
+            NO_WRAP_LAYOUT_WIDTH
         }
         if (lastLayoutAvail != -1 && availNow != lastLayoutAvail) {
             resetLayoutState()
@@ -1580,7 +1629,7 @@ class FastEditorView @JvmOverloads constructor(
 
             override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
                 if (readOnly) return true
-                val ins = text.toString()
+                val ins = normalizeArabicForms(text.toString())
                 val a = if (composingStart >= 0) composingStart else selectionStart
                 val b = if (composingStart >= 0) composingEnd else selectionEnd
                 // Apply the edit, then re-mark the composing range.
