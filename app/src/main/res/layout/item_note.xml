@@ -1,10 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
     android:paddingTop="6dp"
     android:paddingBottom="6dp">
+
+    <!-- Delete action (item 80): sits behind the card and is revealed
+         by swiping the card to the left. Its width (84dp) is mirrored
+         by swipeActionDp in MainActivity's adapter. -->
+    <LinearLayout
+        android:id="@+id/swipeDelete"
+        android:layout_width="84dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/swipeDeleteIcon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:contentDescription="Delete"
+            android:src="@drawable/ic_trash" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Delete"
+            android:textColor="@android:color/white"
+            android:textSize="12sp" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/noteCard"
@@ -61,4 +87,4 @@
             android:singleLine="true"
             android:textSize="11sp" />
     </LinearLayout>
-</LinearLayout>
+</FrameLayout>

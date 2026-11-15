@@ -67,7 +67,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
-        android:hint="Search recent files"
+        android:hint="Search"
         android:importantForAutofill="no"
         android:inputType="text"
         android:paddingStart="16dp"
@@ -95,9 +95,22 @@
         android:clipToPadding="false"
         android:divider="@null"
         android:dividerHeight="0dp"
-        android:paddingBottom="24dp" />
+        android:paddingBottom="24dp"
+        android:scrollbars="none" />
 
 </LinearLayout>
+
+    <!-- Short scroll indicator (item 81): replaces the full-height
+         native scrollbar with a slim 52dp pill that tracks the list
+         while it scrolls and fades out when it settles. Positioned
+         from MainActivity.setupScrollThumb. -->
+    <View
+        android:id="@+id/scrollThumb"
+        android:layout_width="4dp"
+        android:layout_height="52dp"
+        android:layout_gravity="top|end"
+        android:layout_marginEnd="3dp"
+        android:alpha="0" />
 
     <TextView
         android:id="@+id/emptyText"

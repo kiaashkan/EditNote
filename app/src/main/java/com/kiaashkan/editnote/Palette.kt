@@ -44,7 +44,9 @@ class Palette(context: Context) {
     fun pillDrawable(density: Float): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 24f * density
+            // Item 78: the 24dp full-pill corners looked too round;
+            // a modest 10dp radius reads as a modern search field.
+            cornerRadius = 10f * density
             setColor(alt)
             // Item 72: the search pill floated borderless on the
             // background; give it the same hairline as the cards.

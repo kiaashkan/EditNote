@@ -14,6 +14,7 @@ import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -286,6 +287,20 @@ class FastEditorView @JvmOverloads constructor(
     // Appearance / settings
     // ------------------------------------------------------------------
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
+
+    /**
+     * Paint for lines containing complex scripts (item 82): cursive
+     * (Arabic/Persian/Hebrew) and combining scripts (Indic, Thai…)
+     * only shape correctly through the platform's default font
+     * fallback. A monospace typeface can resolve those characters to
+     * a fallback font without OpenType joining on some devices,
+     * leaving every letter in its isolated form. Lines with such
+     * characters are therefore laid out with the DEFAULT typeface
+     * whenever a different (monospace) face is selected.
+     */
+    private val complexPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.DEFAULT
+    }
     private val gutterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.RIGHT
     }
@@ -520,6 +535,24 @@ class FastEditorView @JvmOverloads constructor(
         return lo
     }
 
+    /**
+     * True when the text contains characters from a script that
+     * needs complex shaping: cursive joining (Arabic, Persian,
+     * Hebrew, Syriac), combining marks and conjuncts (Indic, Thai,
+     * Lao) or the Arabic presentation-form blocks. Used to pick the
+     * shaping-safe paint and to keep span boundaries out of such
+     * lines (item 82).
+     */
+    private fun containsComplexScript(s: CharSequence): Boolean {
+        for (i in s.indices) {
+            val c = s[i].code
+            if (c in 0x0590..0x08FF || c in 0x0900..0x0DFF ||
+                c in 0x0E00..0x0EFF || c in 0xFB1D..0xFEFF
+            ) return true
+        }
+        return false
+    }
+
     private fun layoutForLine(line: Int): StaticLayout {
         // The wrap width depends on the gutter width, which grows
         // when the line count crosses a power of ten; cached layouts
@@ -538,6 +571,18 @@ class FastEditorView @JvmOverloads constructor(
         val start = lineStart(line)
         val end = lineEnd(line)
         val raw = buffer.substring(start, end)
+        // Complex-script lines (item 82) get the shaping-safe paint
+        // when a non-default face (monospace) is in use.
+        val complex = containsComplexScript(raw)
+        val paintForLine = if (complex &&
+            textPaint.typeface != null &&
+            textPaint.typeface != Typeface.DEFAULT
+        ) {
+            if (complexPaint.textSize != textPaint.textSize) {
+                complexPaint.textSize = textPaint.textSize
+            }
+            complexPaint
+        } else textPaint
         // Collect this line's spans (if any) via binary search.
         val syntaxIdx = firstRangeEndingAfter(highlightRanges, start)
         val hasSyntax = syntaxIdx < highlightRanges.size &&
@@ -553,9 +598,15 @@ class FastEditorView @JvmOverloads constructor(
             pairRanges[pairIdx].first.first <= end
         val hasComposing = composingStart >= 0 &&
             composingStart < end && composingEnd > start
+        // The composing underline is NOT applied to complex-script
+        // lines (item 82): Android's shaper treats a span boundary
+        // inside a cursive word as a hard break and the letters on
+        // either side lose their joining forms. The IME's own
+        // composing feedback still applies; only our underline goes.
+        val composingSpan = hasComposing && !complex
         // Fast path: no spans touch this line — lay out the raw
         // string directly, skipping the SpannableString entirely.
-        val text: CharSequence = if (!hasSyntax && !hasFind && !hasFg && !hasPair && !hasComposing) {
+        val text: CharSequence = if (!hasSyntax && !hasFind && !hasFg && !hasPair && !composingSpan) {
             raw
         } else {
             val spanned = SpannableString(raw)
@@ -623,7 +674,7 @@ class FastEditorView @JvmOverloads constructor(
                     i++
                 }
             }
-            if (hasComposing) {
+            if (composingSpan) {
                 val a = max(composingStart, start) - start
                 val b = min(composingEnd, end) - start
                 if (b > a && a >= 0) {
@@ -635,8 +686,13 @@ class FastEditorView @JvmOverloads constructor(
             spanned
         }
         val layout = StaticLayout.Builder
-            .obtain(text, 0, text.length, textPaint, availNow)
+            .obtain(text, 0, text.length, paintForLine, availNow)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            // Explicit paragraph direction (item 82): the first
+            // strong character decides, exactly like a TextView —
+            // Persian/Arabic lines become RTL paragraphs, mixed
+            // lines follow the Unicode bidi algorithm.
+            .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
             .setLineSpacing(lineSpacingAddPx, lineSpacingMult)
             .setIncludePad(false)
             .build()
@@ -891,6 +947,7 @@ class FastEditorView @JvmOverloads constructor(
             canvas.save()
             canvas.translate(textLeft.toFloat(), y.toFloat())
             textPaint.color = textColor
+            complexPaint.color = textColor
             layout.draw(canvas)
             canvas.restore()
             canvas.restore()

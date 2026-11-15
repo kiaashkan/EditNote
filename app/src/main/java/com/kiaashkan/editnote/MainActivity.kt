@@ -7,9 +7,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -66,6 +71,14 @@ class MainActivity : Activity() {
             startActivity(EditorActivity.externalIntent(this, Uri.parse(entry.uri), entry.name))
         }
         adapter.onActions = { entry -> showEntryActions(entry) }
+        // Swipe-delete (item 80): same removal as the picker's
+        // "Remove from list" — the entry leaves Recents; the file
+        // itself stays on the device.
+        adapter.onRemove = { entry ->
+            recents.remove(entry.uri)
+            refresh()
+        }
+        setupScrollThumb(listView)
 
         searchBox.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) = refresh()
@@ -129,6 +142,61 @@ class MainActivity : Activity() {
             return
         }
         refresh()
+    }
+
+    /**
+     * Short scroll indicator (KiA, item 81): the native scrollbar ran
+     * the full height of the home list — a long line down the whole
+     * screen. It is disabled in the layout; instead a slim fixed-size
+     * pill (52dp, like the editor's scroll handle) tracks the scroll
+     * position while the list moves and fades out when it settles.
+     * Rows are uniform height, so the position math is exact.
+     */
+    private fun setupScrollThumb(listView: ListView) {
+        val thumb = findViewById<View>(R.id.scrollThumb)
+        val density = resources.displayMetrics.density
+        thumb.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 2f * density
+            setColor(palette.textSecondary)
+            alpha = 150
+        }
+        val hideThumb = Runnable {
+            thumb.animate().alpha(0f).setDuration(250).start()
+        }
+        fun positionThumb() {
+            val child = listView.getChildAt(0) ?: return
+            val rowH = child.height
+            if (rowH == 0) return
+            val scrollY = listView.firstVisiblePosition * rowH - child.top
+            val range = rowH * listView.count - listView.height
+            if (range <= 0) {
+                thumb.alpha = 0f
+                return
+            }
+            val frac = (scrollY.toFloat() / range).coerceIn(0f, 1f)
+            thumb.translationY =
+                listView.top + frac * (listView.height - thumb.height)
+        }
+        listView.setOnScrollListener(object : AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(v: AbsListView, state: Int) {
+                if (state != AbsListView.OnScrollListener.SCROLL_STATE_IDLE) {
+                    adapter.closeOpenSwipe()
+                    thumb.removeCallbacks(hideThumb)
+                    thumb.animate().alpha(1f).setDuration(120).start()
+                } else {
+                    thumb.removeCallbacks(hideThumb)
+                    thumb.postDelayed(hideThumb, 700)
+                }
+            }
+
+            override fun onScroll(
+                v: AbsListView,
+                first: Int,
+                visible: Int,
+                total: Int
+            ) = positionThumb()
+        })
     }
 
     private fun refresh() {
@@ -250,8 +318,13 @@ class MainActivity : Activity() {
         newBtn.background = palette.ovalDrawable(palette.accent)
         newBtn.setColorFilter(palette.onAccent)
         val openBtn = findViewById<ImageButton>(R.id.speedOpen)
-        openBtn.background = palette.ovalDrawable(palette.card)
-        openBtn.setColorFilter(palette.accent)
+        // Item 79 (KiA): the Open mini-button was a card-coloured oval
+        // with an accent glyph — on dark backgrounds the oval vanished
+        // and the folder floated bare, unlike the accent-filled New
+        // button. Both speed-dial buttons now share the exact same
+        // mini-FAB treatment as the main "+" button.
+        openBtn.background = palette.ovalDrawable(palette.accent)
+        openBtn.setColorFilter(palette.onAccent)
         val openAction = {
             closeSpeedDial()
             pickExternalFile()
@@ -468,6 +541,28 @@ class MainActivity : Activity() {
 
         var onOpen: ((RecentFiles.Entry) -> Unit)? = null
         var onActions: ((RecentFiles.Entry) -> Unit)? = null
+        var onRemove: ((RecentFiles.Entry) -> Unit)? = null
+
+        // Swipe-to-delete state (item 80): at most one row is open.
+        // SWIPE_ACTION_DP mirrors the swipeDelete width in item_note.xml.
+        private val swipeActionDp = 84f
+        private var openUri: String? = null
+        private var openCard: View? = null
+        private val deleteDrawable by lazy {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius =
+                    16f * resources.displayMetrics.density
+                setColor(Color.rgb(198, 40, 40))
+            }
+        }
+
+        /** Snap the open row shut (list scrolls, data changed, …). */
+        fun closeOpenSwipe() {
+            openCard?.animate()?.translationX(0f)?.setDuration(180)?.start()
+            openCard = null
+            openUri = null
+        }
 
         private var items: List<RecentFiles.Entry> = emptyList()
 
@@ -481,6 +576,9 @@ class MainActivity : Activity() {
             items = if (AppSettings(this@MainActivity).sortByName) {
                 entries.sortedWith { a, b -> naturalNameCompare(a.name, b.name) }
             } else entries
+            // Fresh data: no row stays swipe-open across a rebind.
+            openUri = null
+            openCard = null
             notifyDataSetChanged()
         }
 
@@ -492,8 +590,10 @@ class MainActivity : Activity() {
             val view = convertView ?: LayoutInflater.from(this@MainActivity)
                 .inflate(R.layout.item_note, parent, false)
             val entry = items[position]
-            view.findViewById<View>(R.id.noteCard).background =
+            val card = view.findViewById<View>(R.id.noteCard)
+            card.background =
                 palette.cardDrawable(density = resources.displayMetrics.density)
+            bindSwipe(view, card, entry)
             val title = view.findViewById<TextView>(R.id.noteTitle)
             val preview = view.findViewById<TextView>(R.id.notePreview)
             val meta = view.findViewById<TextView>(R.id.noteMeta)
@@ -514,7 +614,12 @@ class MainActivity : Activity() {
                 recents.setBookmarked(entry.uri, !entry.bookmarked)
                 refresh()
             }
-            view.setOnClickListener { onOpen?.invoke(entry) }
+            view.setOnClickListener {
+                // A tap on the swipe-open row closes it instead of
+                // opening the file (item 80).
+                if (openUri == entry.uri) closeOpenSwipe()
+                else onOpen?.invoke(entry)
+            }
             view.setOnLongClickListener {
                 onActions?.invoke(entry)
                 true
@@ -527,6 +632,95 @@ class MainActivity : Activity() {
             } else ""
             meta.setTextColor(palette.textSecondary)
             return view
+        }
+
+        /**
+         * Swipe-left-to-delete (KiA, item 80): dragging a row's card
+         * left reveals the Delete action behind it; releasing past
+         * halfway snaps it open, otherwise it snaps shut. Vertical
+         * drags are left to the list's own scrolling, and taps keep
+         * working — the listener only consumes events once a clearly
+         * horizontal drag is under way.
+         */
+        private fun bindSwipe(
+            row: View,
+            card: View,
+            entry: RecentFiles.Entry
+        ) {
+            val density = resources.displayMetrics.density
+            val actionW = swipeActionDp * density
+            val slop = ViewConfiguration.get(this@MainActivity)
+                .scaledTouchSlop
+            val delete = row.findViewById<View>(R.id.swipeDelete)
+            delete.background = deleteDrawable
+            row.findViewById<android.widget.ImageView>(
+                R.id.swipeDeleteIcon
+            ).setColorFilter(Color.WHITE)
+            delete.setOnClickListener {
+                if (openUri == entry.uri) onRemove?.invoke(entry)
+            }
+            // Recycling: a reused row shows its entry's swipe state.
+            card.animate().cancel()
+            card.translationX = if (entry.uri == openUri) {
+                openCard = card
+                -actionW
+            } else 0f
+            var downX = 0f
+            var downY = 0f
+            var startTx = 0f
+            var mode = 0 // 0 undecided, 1 horizontal swipe, 2 vertical
+            row.setOnTouchListener { v, ev ->
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = ev.x
+                        downY = ev.y
+                        startTx = card.translationX
+                        mode = 0
+                        false
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = ev.x - downX
+                        val dy = ev.y - downY
+                        if (mode == 0) {
+                            if (kotlin.math.abs(dx) > slop &&
+                                kotlin.math.abs(dx) > kotlin.math.abs(dy)
+                            ) {
+                                mode = 1
+                                v.parent?.requestDisallowInterceptTouchEvent(true)
+                            } else if (kotlin.math.abs(dy) > slop) {
+                                mode = 2
+                            }
+                        }
+                        if (mode == 1) {
+                            card.translationX =
+                                (startTx + dx).coerceIn(-actionW, 0f)
+                            true
+                        } else false
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (mode == 1) {
+                            val open = card.translationX < -actionW / 2
+                            if (open) {
+                                if (openUri != entry.uri) closeOpenSwipe()
+                                openUri = entry.uri
+                                openCard = card
+                                card.animate().translationX(-actionW)
+                                    .setDuration(180).start()
+                            } else {
+                                if (openUri == entry.uri) {
+                                    openUri = null
+                                    openCard = null
+                                }
+                                card.animate().translationX(0f)
+                                    .setDuration(180).start()
+                            }
+                            mode = 0
+                            true
+                        } else false
+                    }
+                    else -> false
+                }
+            }
         }
     }
 
