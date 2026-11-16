@@ -16,7 +16,7 @@ import com.kiaashkan.editnote.data.AppSettings
  * All framework controls follow the theme's accent color, because
  * ThemeHelper picks a theme style per accent — nothing stays green.
  */
-class SettingsActivity : Activity() {
+class SettingsActivity : BaseActivity() {
 
     private lateinit var settings: AppSettings
     private lateinit var palette: Palette
@@ -25,7 +25,6 @@ class SettingsActivity : Activity() {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
         // The app never mirrors (item 95) — see MainActivity.
-        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         setContentView(R.layout.activity_settings)
         settings = AppSettings(this)
         palette = Palette(this)
@@ -78,7 +77,7 @@ class SettingsActivity : Activity() {
                 )
             } catch (e: Exception) {
                 android.widget.Toast.makeText(
-                    this, "No email app available", android.widget.Toast.LENGTH_SHORT
+                    this, getString(R.string.no_email_app), android.widget.Toast.LENGTH_SHORT
                 ).show()
             }
         }
@@ -106,15 +105,15 @@ class SettingsActivity : Activity() {
         val accentRow = findViewById<LinearLayout>(R.id.accentRow)
         val density = resources.displayMetrics.density
         val names = mapOf(
-            AppSettings.ACCENT_ORANGE to "Orange",
-            AppSettings.ACCENT_MONO to "Black / White",
-            AppSettings.ACCENT_GREEN to "Green",
-            AppSettings.ACCENT_BLUE to "Pink",
-            AppSettings.ACCENT_PURPLE to "Purple",
-            AppSettings.ACCENT_TEAL to "Cream"
+            AppSettings.ACCENT_ORANGE to getString(R.string.accent_orange),
+            AppSettings.ACCENT_MONO to getString(R.string.accent_mono),
+            AppSettings.ACCENT_GREEN to getString(R.string.accent_green),
+            AppSettings.ACCENT_BLUE to getString(R.string.accent_pink),
+            AppSettings.ACCENT_PURPLE to getString(R.string.accent_purple),
+            AppSettings.ACCENT_TEAL to getString(R.string.accent_cream)
         )
         fun refreshAccentLabel() {
-            accentLabel.text = names[settings.accent] ?: "Orange"
+            accentLabel.text = names[settings.accent] ?: getString(R.string.accent_orange)
         }
         accentLabel.setTextColor(palette.accent)
         refreshAccentLabel()
@@ -146,6 +145,46 @@ class SettingsActivity : Activity() {
                 marginEnd = (12 * density).toInt()
             }
             accentRow.addView(swatch, params)
+        }
+
+        // Language (item 99): "System" follows the phone, or pin
+        // one of the built-in languages. Names are endonyms — each
+        // language written in itself, as language pickers do.
+        val languageTags = listOf(
+            AppSettings.LANG_SYSTEM, "en", "fa", "ar", "tr", "ru",
+            "es", "fr", "de", "zh"
+        )
+        fun languageLabel(tag: String): String = when (tag) {
+            AppSettings.LANG_SYSTEM -> getString(R.string.theme_system)
+            "en" -> "English"
+            "fa" -> "فارسی"
+            "ar" -> "العربية"
+            "tr" -> "Türkçe"
+            "ru" -> "Русский"
+            "es" -> "Español"
+            "fr" -> "Français"
+            "de" -> "Deutsch"
+            "zh" -> "中文"
+            else -> tag
+        }
+        val languageValue = findViewById<TextView>(R.id.languageValue)
+        fun refreshLanguage() {
+            languageValue.text = languageLabel(settings.language)
+        }
+        languageValue.setTextColor(palette.accent)
+        refreshLanguage()
+        findViewById<android.view.View>(R.id.rowLanguage).setOnClickListener {
+            val current = languageTags.indexOf(settings.language)
+                .let { if (it < 0) 0 else it }
+            showPicker(
+                getString(R.string.language),
+                languageTags.map { languageLabel(it) },
+                current
+            ) { picked ->
+                settings.language = languageTags[picked]
+                refreshLanguage()
+                recreate()
+            }
         }
 
         // Font size: SeekBar 0..10 maps to 13..23 sp
@@ -202,14 +241,14 @@ class SettingsActivity : Activity() {
 
         val indentValue = findViewById<TextView>(R.id.indentValue)
         fun refreshIndent() {
-            indentValue.text = if (settings.indentWithTab) "Tab" else "4 spaces"
+            indentValue.text = if (settings.indentWithTab) getString(R.string.indent_tab) else getString(R.string.indent_spaces)
         }
         indentValue.setTextColor(palette.accent)
         refreshIndent()
         findViewById<android.view.View>(R.id.rowIndent).setOnClickListener {
             showPicker(
-                "Indentation",
-                listOf("4 spaces", "Tab"),
+                getString(R.string.indentation),
+                listOf(getString(R.string.indent_spaces), getString(R.string.indent_tab)),
                 if (settings.indentWithTab) 1 else 0
             ) { picked ->
                 settings.indentWithTab = picked == 1
@@ -224,10 +263,10 @@ class SettingsActivity : Activity() {
         val intervalValue = findViewById<TextView>(R.id.intervalValue)
         val intervals = listOf(30, 60, 120, 300)
         fun intervalLabel(sec: Int): String = when (sec) {
-            30 -> "30 seconds"
-            60 -> "1 minute"
-            120 -> "2 minutes"
-            else -> "5 minutes"
+            30 -> getString(R.string.interval_30s)
+            60 -> getString(R.string.interval_1m)
+            120 -> getString(R.string.interval_2m)
+            else -> getString(R.string.interval_5m)
         }
         fun refreshInterval() {
             intervalValue.text = intervalLabel(settings.autosaveIntervalSec)
@@ -238,7 +277,7 @@ class SettingsActivity : Activity() {
             val current = intervals.indexOf(settings.autosaveIntervalSec)
                 .let { if (it < 0) 1 else it }
             showPicker(
-                "Autosave interval",
+                getString(R.string.autosave_interval),
                 intervals.map { intervalLabel(it) },
                 current
             ) { picked ->
@@ -256,7 +295,7 @@ class SettingsActivity : Activity() {
         findViewById<android.view.View>(R.id.rowEncoding).setOnClickListener {
             val list = AppSettings.ENCODINGS
             val current = list.indexOf(settings.encoding).let { if (it < 0) 0 else it }
-            showPicker("Default encoding", list, current) { picked ->
+            showPicker(getString(R.string.default_encoding), list, current) { picked ->
                 settings.encoding = list[picked]
                 refreshEncoding()
             }
@@ -270,7 +309,7 @@ class SettingsActivity : Activity() {
         refreshLineBreak()
         findViewById<android.view.View>(R.id.rowLineBreak).setOnClickListener {
             showPicker(
-                "Line break",
+                getString(R.string.line_break),
                 listOf("LF", "CRLF (Windows)"),
                 if (settings.crlf) 1 else 0
             ) { picked ->
@@ -355,7 +394,6 @@ class SettingsActivity : Activity() {
         }
         dialog.setContentView(card)
         // Dialogs never mirror either (item 95).
-        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         )
@@ -385,7 +423,7 @@ class SettingsActivity : Activity() {
             )
         } catch (e: Exception) {
             android.widget.Toast.makeText(
-                this, "No browser available", android.widget.Toast.LENGTH_SHORT
+                this, getString(R.string.no_browser), android.widget.Toast.LENGTH_SHORT
             ).show()
         }
     }

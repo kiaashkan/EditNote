@@ -26,7 +26,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Settings"
+                android:text="@string/settings_title"
                 android:textSize="22sp"
                 android:textStyle="bold" />
         </LinearLayout>
@@ -39,7 +39,7 @@
             android:layout_marginTop="22dp"
             android:layout_marginBottom="8dp"
             android:letterSpacing="0.08"
-            android:text="APPEARANCE"
+            android:text="@string/appearance"
             android:textSize="12sp"
             android:textStyle="bold" />
 
@@ -53,11 +53,50 @@
             android:paddingEnd="16dp"
             android:paddingBottom="12dp">
 
+            <LinearLayout
+                android:id="@+id/rowLanguage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/language"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/languageValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="6dp"
+                    android:text="@string/chevron"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="20sp" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#33888888" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingTop="6dp"
-                android:text="Theme"
+                android:paddingTop="10dp"
+                android:text="@string/theme"
                 android:textSize="16sp" />
 
             <RadioGroup
@@ -71,21 +110,21 @@
                     android:id="@+id/themeSystem"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="System" />
+                    android:text="@string/theme_system" />
 
                 <RadioButton
                     android:id="@+id/themeLight"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="16dp"
-                    android:text="Light" />
+                    android:text="@string/theme_light" />
 
                 <RadioButton
                     android:id="@+id/themeDark"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="16dp"
-                    android:text="Dark" />
+                    android:text="@string/theme_dark" />
             </RadioGroup>
 
             <View
@@ -106,14 +145,14 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Accent color"
+                    android:text="@string/accent_color"
                     android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/accentLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Orange"
+                    android:text="@string/accent_orange"
                     android:textSize="14sp" />
             </LinearLayout>
 
@@ -133,7 +172,7 @@
             android:layout_marginTop="24dp"
             android:layout_marginBottom="8dp"
             android:letterSpacing="0.08"
-            android:text="EDITOR"
+            android:text="@string/editor_section"
             android:textSize="12sp"
             android:textStyle="bold" />
 
@@ -158,7 +197,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Font size"
+                    android:text="@string/font_size"
                     android:textSize="16sp" />
 
                 <TextView
@@ -193,7 +232,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Line spacing"
+                    android:text="@string/line_spacing"
                     android:textSize="16sp" />
 
                 <TextView
@@ -229,7 +268,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Monospace font"
+                    android:text="@string/monospace_font"
                     android:textSize="16sp" />
 
                 <Switch
@@ -255,7 +294,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Line numbers"
+                    android:text="@string/line_numbers"
                     android:textSize="16sp" />
 
                 <Switch
@@ -281,7 +320,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Word wrap"
+                    android:text="@string/word_wrap"
                     android:textSize="16sp" />
 
                 <Switch
@@ -307,7 +346,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Syntax highlighting (code files)"
+                    android:text="@string/syntax_highlighting"
                     android:textSize="16sp" />
 
                 <Switch
@@ -333,7 +372,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Auto indent"
+                    android:text="@string/auto_indent"
                     android:textSize="16sp" />
 
                 <Switch
@@ -359,7 +398,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Accessory view (symbol bar)"
+                    android:text="@string/accessory_view"
                     android:textSize="16sp" />
 
                 <Switch
@@ -385,7 +424,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Show word suggestions while typing"
+                    android:text="@string/show_suggestions"
                     android:textSize="16sp" />
 
                 <Switch
@@ -411,7 +450,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Auto capitalize sentences"
+                    android:text="@string/auto_capitalize"
                     android:textSize="16sp" />
 
                 <Switch
@@ -437,7 +476,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Undo with the Back button"
+                    android:text="@string/undo_back"
                     android:textSize="16sp" />
 
                 <Switch
@@ -467,21 +506,21 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Indentation"
+                    android:text="@string/indentation"
                     android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/indentValue"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="4 spaces"
+                    android:text="@string/indent_spaces"
                     android:textSize="14sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:paddingStart="6dp"
-                    android:text="›"
+                    android:text="@string/chevron"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="20sp" />
             </LinearLayout>
@@ -495,7 +534,7 @@
             android:layout_marginTop="24dp"
             android:layout_marginBottom="8dp"
             android:letterSpacing="0.08"
-            android:text="FILES &amp; SAVING"
+            android:text="@string/files_saving"
             android:textSize="12sp"
             android:textStyle="bold" />
 
@@ -521,7 +560,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Autosave"
+                    android:text="@string/autosave"
                     android:textSize="16sp" />
 
                 <Switch
@@ -547,7 +586,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Show a message when autosave succeeds"
+                    android:text="@string/autosave_msg"
                     android:textSize="16sp" />
 
                 <Switch
@@ -577,21 +616,21 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Autosave interval"
+                    android:text="@string/autosave_interval"
                     android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/intervalValue"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="1 minute"
+                    android:text="@string/interval_1m"
                     android:textSize="14sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:paddingStart="6dp"
-                    android:text="›"
+                    android:text="@string/chevron"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="20sp" />
             </LinearLayout>
@@ -617,7 +656,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Default encoding"
+                    android:text="@string/default_encoding"
                     android:textSize="16sp" />
 
                 <TextView
@@ -631,7 +670,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:paddingStart="6dp"
-                    android:text="›"
+                    android:text="@string/chevron"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="20sp" />
             </LinearLayout>
@@ -657,7 +696,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Line break"
+                    android:text="@string/line_break"
                     android:textSize="16sp" />
 
                 <TextView
@@ -671,7 +710,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:paddingStart="6dp"
-                    android:text="›"
+                    android:text="@string/chevron"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="20sp" />
             </LinearLayout>
@@ -690,7 +729,7 @@
             android:layout_marginTop="24dp"
             android:layout_marginBottom="8dp"
             android:letterSpacing="0.08"
-            android:text="ABOUT"
+            android:text="@string/about_section"
             android:textSize="12sp"
             android:textStyle="bold" />
 
@@ -722,7 +761,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="EditNote 1.4.6"
+                        android:text="EditNote 1.4.10"
                         android:textSize="17sp"
                         android:textStyle="bold" />
 
@@ -730,7 +769,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
-                        android:text="A small, offline text editor"
+                        android:text="@string/about_tagline"
                         android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
@@ -740,7 +779,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:lineSpacingMultiplier="1.3"
-                android:text="No ads. No internet. Your files stay on your device, exactly where you put them."
+                android:text="@string/about_text"
                 android:textSize="14sp" />
 
             <View
@@ -777,13 +816,13 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Update EditNote"
+                        android:text="@string/update_title"
                         android:textSize="15sp" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Get the latest version on GitHub"
+                        android:text="@string/update_sub"
                         android:textSize="12sp" />
                 </LinearLayout>
             </LinearLayout>
@@ -815,7 +854,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Report a bug"
+                        android:text="@string/report_bug"
                         android:textSize="15sp" />
 
                     <TextView
@@ -831,7 +870,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:gravity="center"
-                android:text="Built by KiA Ashkan, with the help of Muse"
+                android:text="@string/built_by"
                 android:textSize="12sp" />
         </LinearLayout>
     </LinearLayout>

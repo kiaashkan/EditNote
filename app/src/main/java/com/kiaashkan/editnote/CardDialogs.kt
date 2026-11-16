@@ -121,7 +121,6 @@ object CardDialogs {
         }
         dialog.setContentView(card)
         // Dialogs never mirror either (item 95).
-        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setLayout(
             (activity.resources.displayMetrics.widthPixels * 0.9).toInt(),
@@ -237,7 +236,6 @@ object CardDialogs {
         }
         dialog.setContentView(card)
         // Dialogs never mirror either (item 95).
-        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.setLayout(
             (activity.resources.displayMetrics.widthPixels * 0.88).toInt(),
@@ -263,7 +261,7 @@ object CardDialogs {
                 onNegative()
             })
         }
-        buttons.add(ButtonSpec("Cancel") { d -> d.dismiss() })
+        buttons.add(ButtonSpec(activity.getString(R.string.cancel)) { d -> d.dismiss() })
         buttons.add(ButtonSpec(positiveLabel, primary = true) { d ->
             d.dismiss()
             onPositive()
@@ -279,7 +277,7 @@ object CardDialogs {
     ) {
         show(
             activity, palette, title, message,
-            buttons = listOf(ButtonSpec("OK", primary = true) { d -> d.dismiss() })
+            buttons = listOf(ButtonSpec(activity.getString(R.string.ok), primary = true) { d -> d.dismiss() })
         )
     }
 }

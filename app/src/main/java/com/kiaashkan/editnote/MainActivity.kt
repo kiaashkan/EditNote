@@ -34,7 +34,7 @@ import java.util.Date
  * bookmarks are starred but never change the order (KiA, item 70) —
  * plus Open / New actions. Files live — and die — on the device itself.
  */
-class MainActivity : Activity() {
+class MainActivity : BaseActivity() {
 
     private lateinit var recents: RecentFiles
     private lateinit var palette: Palette
@@ -49,7 +49,6 @@ class MainActivity : Activity() {
         // The app never mirrors (item 95): with supportsRtl=false
         // plus this, an RTL-locale phone (Persian/Arabic system
         // language) gets the exact same LTR layout as everyone else.
-        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         setContentView(R.layout.activity_main)
         recents = RecentFiles(this)
         palette = Palette(this)
@@ -131,6 +130,18 @@ class MainActivity : Activity() {
         findViewById<ImageButton>(R.id.btnHomeReset).setOnClickListener {
             confirmResetList()
         }
+        // Item 99: ImageView's FIT_START ignores the layout
+        // direction, so in RTL the logo lockup hugged the wrong
+        // side of its wide slot — align it to the end instead.
+        val homeLogo = findViewById<android.widget.ImageView>(R.id.homeLogo)
+        homeLogo.scaleType = if (
+            resources.configuration.layoutDirection ==
+            View.LAYOUT_DIRECTION_RTL
+        ) {
+            android.widget.ImageView.ScaleType.FIT_END
+        } else {
+            android.widget.ImageView.ScaleType.FIT_START
+        }
         findViewById<ImageButton>(R.id.btnHomeSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -203,7 +214,7 @@ class MainActivity : Activity() {
 
     private fun refresh() {
         findViewById<TextView>(R.id.sectionLabel).text =
-            if (bookmarksOnly) "BOOKMARKS" else "RECENT FILES"
+            if (bookmarksOnly) getString(R.string.bookmarks_header) else getString(R.string.recent_files)
         val query = searchBox.text?.toString()?.trim()?.lowercase() ?: ""
         val entries = recents.list().filter {
             (query.isEmpty() || it.name.lowercase().contains(query)) &&
@@ -213,11 +224,11 @@ class MainActivity : Activity() {
         emptyText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         if (entries.isEmpty()) {
             emptyText.text = when {
-                query.isNotEmpty() -> "No files match \u201C$query\u201D."
+                query.isNotEmpty() -> getString(R.string.no_match, query)
                 bookmarksOnly ->
-                    "No bookmarks yet.\nTap the star on a file to bookmark it."
+                    getString(R.string.no_bookmarks)
                 else ->
-                    "No files yet.\nTap + to create a new file, or open one from your device."
+                    getString(R.string.empty_recents)
             }
         }
     }
@@ -234,14 +245,13 @@ class MainActivity : Activity() {
             background = palette.cardDrawable(20f, density)
             setPadding(dp(22), dp(20), dp(22), dp(16))
             addView(TextView(this@MainActivity).apply {
-                text = "Reset the recent list?"
+                text = getString(R.string.reset_recents_title)
                 textSize = 17f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 setTextColor(palette.textPrimary)
             })
             addView(TextView(this@MainActivity).apply {
-                text = "This clears the list of recently opened files. " +
-                    "Your files and bookmarks are not touched."
+                text = getString(R.string.reset_recents_msg)
                 textSize = 14f
                 setTextColor(palette.textSecondary)
                 setPadding(0, dp(8), 0, 0)
@@ -251,7 +261,7 @@ class MainActivity : Activity() {
                 gravity = android.view.Gravity.END
                 setPadding(0, dp(18), 0, 0)
                 addView(TextView(this@MainActivity).apply {
-                    text = "Cancel"
+                    text = getString(R.string.cancel)
                     textSize = 15f
                     setTextColor(palette.textPrimary)
                     val ripple = android.util.TypedValue()
@@ -263,7 +273,7 @@ class MainActivity : Activity() {
                     setOnClickListener { dialog.dismiss() }
                 })
                 addView(Button(this@MainActivity).apply {
-                    text = "Reset"
+                    text = getString(R.string.reset_btn)
                     textSize = 15f
                     isAllCaps = false
                     // Accent-filled pill (pillDrawable is the soft alt
@@ -284,7 +294,7 @@ class MainActivity : Activity() {
                         refresh()
                         Toast.makeText(
                             this@MainActivity,
-                            "Recent list cleared (bookmarks kept)",
+                            getString(R.string.recents_cleared_toast),
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -294,7 +304,6 @@ class MainActivity : Activity() {
         }
         dialog.setContentView(card)
         // Dialogs never mirror either (item 95).
-        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         )
@@ -398,7 +407,7 @@ class MainActivity : Activity() {
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
         val input = EditText(this).apply {
-            hint = "File name (e.g. ideas.txt)"
+            hint = getString(R.string.file_name_hint)
             isSingleLine = true
             setTextColor(palette.textPrimary)
             setHintTextColor(palette.textSecondary)
@@ -415,13 +424,13 @@ class MainActivity : Activity() {
             background = palette.cardDrawable(20f, density)
             setPadding(dp(22), dp(20), dp(22), dp(16))
             addView(TextView(this@MainActivity).apply {
-                text = "New file"
+                text = getString(R.string.new_file)
                 textSize = 19f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 setTextColor(palette.textPrimary)
             })
             addView(TextView(this@MainActivity).apply {
-                text = "You will choose where to save it."
+                text = getString(R.string.new_file_msg)
                 textSize = 14f
                 setTextColor(palette.textSecondary)
                 setPadding(0, dp(4), 0, dp(14))
@@ -438,7 +447,6 @@ class MainActivity : Activity() {
         val dialog = android.app.Dialog(this)
         dialog.setContentView(card)
         // Dialogs never mirror either (item 95).
-        dialog.window?.decorView?.layoutDirection = View.LAYOUT_DIRECTION_LTR
         dialog.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
         )
@@ -448,14 +456,14 @@ class MainActivity : Activity() {
         )
         val buttons = card.tag as LinearLayout
         buttons.addView(TextView(this).apply {
-            text = "Cancel"
+            text = getString(R.string.cancel)
             textSize = 15f
             setTextColor(palette.textPrimary)
             setPadding(dp(14), dp(10), dp(14), dp(10))
             setOnClickListener { dialog.dismiss() }
         })
         buttons.addView(TextView(this).apply {
-            text = "Create"
+            text = getString(R.string.create_btn)
             textSize = 15f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(palette.onAccent)
@@ -468,14 +476,14 @@ class MainActivity : Activity() {
             }
             setPadding(dp(20), dp(10), dp(20), dp(10))
             setOnClickListener {
-                val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                val name = input.text.toString().trim().ifEmpty { getString(R.string.untitled) }
                 dialog.dismiss()
                 startActivity(EditorActivity.newDocIntent(this@MainActivity, name))
             }
         })
         input.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
-                val name = input.text.toString().trim().ifEmpty { "Untitled" }
+                val name = input.text.toString().trim().ifEmpty { getString(R.string.untitled) }
                 dialog.dismiss()
                 startActivity(EditorActivity.newDocIntent(this@MainActivity, name))
                 true
@@ -587,11 +595,20 @@ class MainActivity : Activity() {
                 palette.cardDrawable(density = resources.displayMetrics.density)
             bindSwipe(view, card, entry)
             val title = view.findViewById<TextView>(R.id.noteTitle)
-            // Persian names anchor left (item 94) — forced in code at
-            // bind time: XML textDirection alone did not take effect
-            // on KiA's Persian-locale phone.
-            title.textDirection = View.TEXT_DIRECTION_LTR
-            title.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            // File-name anchoring follows the app language
+            // (item 98): in LTR languages Persian names anchor left
+            // (item 94 — forced in code at bind time; XML
+            // textDirection alone did not take effect); in RTL
+            // languages (fa/ar) names render naturally.
+            if (resources.configuration.layoutDirection ==
+                View.LAYOUT_DIRECTION_RTL
+            ) {
+                title.textDirection = View.TEXT_DIRECTION_INHERIT
+                title.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            } else {
+                title.textDirection = View.TEXT_DIRECTION_LTR
+                title.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            }
             val preview = view.findViewById<TextView>(R.id.notePreview)
             val meta = view.findViewById<TextView>(R.id.noteMeta)
             // A leading LEFT-TO-RIGHT MARK pins the name's paragraph
@@ -600,7 +617,7 @@ class MainActivity : Activity() {
             // paragraph despite the view's LTR direction settings —
             // the mark makes the first strong character LTR, so the
             // name anchors left under any direction heuristic.
-            title.text = "\u200E" + entry.name
+            title.text = displayFileName(this@MainActivity, entry.name)
             title.setTextColor(palette.textPrimary)
             // Visible bookmark star (KiA, item 38: bookmarks existed in
             // the data layer and a long-press menu, but with nothing on
@@ -625,11 +642,16 @@ class MainActivity : Activity() {
             }
             // No long-press menu (KiA, item 84: removed — Open is a
             // tap, bookmark is the star, removal is the swipe).
-            preview.text = "Device file"
+            preview.text = getString(R.string.device_file)
             preview.setTextColor(palette.textSecondary)
             meta.text = if (entry.lastOpened > 0) {
-                "Opened " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                    .format(Date(entry.lastOpened))
+                // Item 98: follows the app language (locale date).
+                getString(
+                    R.string.opened_fmt,
+                    DateFormat.getDateTimeInstance(
+                        DateFormat.MEDIUM, DateFormat.SHORT
+                    ).format(Date(entry.lastOpened))
+                )
             } else ""
             meta.setTextColor(palette.textSecondary)
             return view
@@ -751,6 +773,15 @@ class MainActivity : Activity() {
          * case-insensitively, character by character. Pure string
          * work — JVM-tested (1, 2, 5, 10 order; case; prefixes).
          */
+
+    /** File-name rendering follows the app language (item 98): in
+     *  LTR languages a leading LEFT-TO-RIGHT MARK keeps Persian
+     *  names anchored left (item 94); in RTL languages (fa/ar) the
+     *  name renders naturally, with no mark. */
+    fun displayFileName(context: android.content.Context, name: String): String =
+        if (context.resources.configuration.layoutDirection ==
+            View.LAYOUT_DIRECTION_RTL
+        ) name else "\u200E" + name
         fun naturalNameCompare(a: String, b: String): Int {
             var i = 0
             var j = 0
@@ -765,8 +796,15 @@ class MainActivity : Activity() {
                     // Numeric compare without overflow: strip the
                     // leading zeros, the longer run is the bigger
                     // number, equal lengths compare lexicographically.
-                    val na = a.substring(i, iEnd).trimStart('0')
-                    val nb = b.substring(j, jEnd).trimStart('0')
+                    // Item 97: the runs are first normalised by digit
+                    // VALUE, so Persian/Arabic digits (۲، ٣…) compare
+                    // as the numbers they are, not by codepoint.
+                    val na = a.substring(i, iEnd)
+                        .map { '0' + Character.digit(it, 10) }
+                        .joinToString("").trimStart('0')
+                    val nb = b.substring(j, jEnd)
+                        .map { '0' + Character.digit(it, 10) }
+                        .joinToString("").trimStart('0')
                     if (na.length != nb.length) return na.length - nb.length
                     val byDigits = na.compareTo(nb)
                     if (byDigits != 0) return byDigits

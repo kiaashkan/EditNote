@@ -1672,11 +1672,11 @@ class FastEditorView @JvmOverloads constructor(
             override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
                 menu.clear()
                 if (selStart != selEnd) {
-                    menu.add(0, 1, 0, "Cut").setEnabled(!readOnly)
-                    menu.add(0, 2, 1, "Copy")
+                    menu.add(0, 1, 0, context.getString(R.string.cut)).setEnabled(!readOnly)
+                    menu.add(0, 2, 1, context.getString(R.string.copy))
                 }
-                menu.add(0, 3, 2, "Paste").setEnabled(!readOnly)
-                menu.add(0, 4, 3, "Select all")
+                menu.add(0, 3, 2, context.getString(R.string.menu_paste)).setEnabled(!readOnly)
+                menu.add(0, 4, 3, context.getString(R.string.menu_select_all))
                 return true
             }
 

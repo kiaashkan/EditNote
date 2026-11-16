@@ -10,6 +10,12 @@ class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     // Appearance
+    /** In-app language (item 99): "system" follows the phone, or
+     *  a language tag ("fa", "ar", ...) pins the app's language. */
+    var language: String
+        get() = prefs.getString(KEY_LANGUAGE, LANG_SYSTEM) ?: LANG_SYSTEM
+        set(v) = prefs.edit().putString(KEY_LANGUAGE, v).apply()
+
     var themeMode: String
         get() = prefs.getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM
         set(v) = prefs.edit().putString(KEY_THEME, v).apply()
@@ -122,6 +128,7 @@ class AppSettings(context: Context) {
     companion object {
         private const val PREFS = "editnote_settings"
         private const val KEY_THEME = "theme_mode"
+        private const val KEY_LANGUAGE = "app_language"
         private const val KEY_ACCENT = "accent"
         private const val KEY_FONT_SIZE = "font_size"
         private const val KEY_LINE_SPACING = "line_spacing"
@@ -145,6 +152,7 @@ class AppSettings(context: Context) {
         private const val KEY_VISUAL_STYLE = "visual_style"
 
         const val THEME_SYSTEM = "system"
+        const val LANG_SYSTEM = "system"
         const val THEME_LIGHT = "light"
         const val THEME_DARK = "dark"
 

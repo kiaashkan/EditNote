@@ -1,4 +1,176 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Item 98: every user-visible string lives here; the app follows
+     the phone's language (values-fa, values-ar, values-tr, values-ru,
+     values-es, values-fr, values-de, values-zh). -->
 <resources>
     <string name="app_name">EditNote</string>
+
+    <!-- Home -->
+    <string name="search_hint">Search</string>
+    <string name="recent_files">RECENT FILES</string>
+    <string name="bookmarks_header">BOOKMARKS</string>
+    <string name="empty_recents">No files yet.\nTap + to create a new file, or open one from your device.</string>
+    <string name="no_bookmarks">No bookmarks yet.\nTap the star on a file to bookmark it.</string>
+    <string name="no_match">No files match “%1$s”.</string>
+    <string name="new_file">New file</string>
+    <string name="open_a_file">Open a file</string>
+    <string name="delete_label">Delete</string>
+    <string name="device_file">Device file</string>
+    <string name="opened_fmt">Opened %1$s</string>
+    <string name="reset_recents_title">Reset the recent list?</string>
+    <string name="reset_recents_msg">This clears the list of recently opened files. Your files and bookmarks are not touched.</string>
+    <string name="reset_btn">Reset</string>
+    <string name="recents_cleared_toast">Recent list cleared (bookmarks kept)</string>
+    <string name="file_name_hint">File name (e.g. ideas.txt)</string>
+    <string name="new_file_msg">You will choose where to save it.</string>
+    <string name="create_btn">Create</string>
+    <string name="untitled">Untitled</string>
+
+    <!-- Common -->
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="file_name">File name</string>
+
+    <!-- Editor chrome -->
+    <string name="find_hint">Find in text</string>
+    <string name="saved_toast">Saved</string>
+    <string name="saved_at_fmt">Saved %1$s</string>
+    <string name="saved_at_autosave_fmt">Saved %1$s · Autosave on</string>
+    <string name="encoding_title">Encoding</string>
+    <string name="syntax_title">Syntax</string>
+    <string name="save_failed">Save failed</string>
+    <string name="save_failed_fmt">Save failed: %1$s</string>
+    <string name="status_unsaved">Unsaved changes</string>
+    <string name="status_loading">Loading…</string>
+    <string name="status_draft">Draft · tap Save to choose where to keep it</string>
+    <string name="status_new_file">New file · not saved yet</string>
+    <string name="status_draft_saved">Draft saved · tap Save to choose where to keep it</string>
+    <string name="status_read_only">Read only</string>
+    <string name="readonly_src_status">Read-only from source · Save saves a copy</string>
+    <string name="readonly_src_autosave">Read-only from source · tap Save to save a copy</string>
+    <string name="access_lost_fmt">Access to “%1$s” was lost. Open it once via Open file — after that it stays in Recents.</string>
+    <string name="bookmark_first_toast">Save the file first to bookmark it</string>
+    <string name="bookmarked_toast">Bookmarked</string>
+    <string name="bookmark_removed_toast">Bookmark removed</string>
+    <string name="encoding_toast_fmt">Encoding: %1$s (applies when saved)</string>
+    <string name="reload_new_toast">Nothing to reload for a new file</string>
+    <string name="clipboard_empty">Clipboard is empty</string>
+    <string name="not_found_fmt">Not found: %1$s</string>
+    <string name="replaced_fmt">Replaced %1$d occurrence(s)</string>
+    <string name="cut">Cut</string>
+    <string name="copy">Copy</string>
+
+    <!-- Editor menus -->
+    <string name="menu_new">New</string>
+    <string name="menu_open">Open…</string>
+    <string name="menu_save">Save</string>
+    <string name="menu_save_as">Save as…</string>
+    <string name="menu_bookmarked">Bookmarked</string>
+    <string name="menu_reload">Reload</string>
+    <string name="menu_close_tab">Close tab</string>
+    <string name="menu_share">Share</string>
+    <string name="menu_print">Print</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_select_all">Select all</string>
+    <string name="menu_paste">Paste</string>
+    <string name="menu_insert_datetime">Insert date &amp; time</string>
+    <string name="menu_indent_inc">Increase indent</string>
+    <string name="menu_indent_dec">Decrease indent</string>
+    <string name="menu_goto_line">Go to line…</string>
+    <string name="menu_find_replace">Find &amp; Replace…</string>
+    <string name="menu_statistics">Statistics</string>
+    <string name="menu_visual_style">Visual style…</string>
+    <string name="menu_encoding">Encoding…</string>
+    <string name="menu_syntax">Syntax…</string>
+    <string name="menu_word_wrap">Word wrap</string>
+    <string name="menu_read_only">Read only</string>
+    <string name="visual_styles">Visual Styles</string>
+    <string name="automatic">Automatic</string>
+    <string name="none">None</string>
+    <string name="none_auto">None (automatic)</string>
+    <string name="auto_suffix_fmt">%1$s (automatic)</string>
+    <string name="style_default">Default</string>
+
+    <!-- Editor dialogs -->
+    <string name="save_q_fmt">Save “%1$s”?</string>
+    <string name="save_new_file_msg">This new file has not been saved anywhere yet.</string>
+    <string name="save_ellipsis">Save…</string>
+    <string name="discard_btn">Discard</string>
+    <string name="save_new_file">Save new file</string>
+    <string name="save_new_file_hint">Name the file, then choose where to save it.</string>
+    <string name="choose_location">Choose location…</string>
+    <string name="goto_title">Go to line</string>
+    <string name="line_number">Line number</string>
+    <string name="go_btn">Go</string>
+    <string name="find_replace_title">Find &amp; Replace</string>
+    <string name="find_label">Find</string>
+    <string name="replace_with_label">Replace with</string>
+    <string name="replace_all_btn">Replace all</string>
+    <string name="stats_title">Statistics</string>
+    <string name="stats_body">Characters: %1$d\nWords: %2$d\nLines: %3$d\nEncoding: %4$s\nSyntax: %5$s\nVisual style: %6$s\nColour ranges: %7$d\nHighlight: %8$s</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="language">Language</string>
+    <string name="appearance">APPEARANCE</string>
+    <string name="theme">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="accent_color">Accent color</string>
+    <string name="accent_orange">Orange</string>
+    <string name="accent_mono">Black / White</string>
+    <string name="accent_green">Green</string>
+    <string name="accent_pink">Pink</string>
+    <string name="accent_purple">Purple</string>
+    <string name="accent_cream">Cream</string>
+    <string name="editor_section">EDITOR</string>
+    <string name="font_size">Font size</string>
+    <string name="line_spacing">Line spacing</string>
+    <string name="monospace_font">Monospace font</string>
+    <string name="line_numbers">Line numbers</string>
+    <string name="word_wrap">Word wrap</string>
+    <string name="syntax_highlighting">Syntax highlighting (code files)</string>
+    <string name="auto_indent">Auto indent</string>
+    <string name="accessory_view">Accessory view (symbol bar)</string>
+    <string name="show_suggestions">Show word suggestions while typing</string>
+    <string name="auto_capitalize">Auto capitalize sentences</string>
+    <string name="undo_back">Undo with the Back button</string>
+    <string name="indentation">Indentation</string>
+    <string name="indent_spaces">4 spaces</string>
+    <string name="indent_tab">Tab</string>
+    <string name="files_saving">FILES &amp; SAVING</string>
+    <string name="autosave">Autosave</string>
+    <string name="autosave_msg">Show a message when autosave succeeds</string>
+    <string name="autosave_interval">Autosave interval</string>
+    <string name="interval_30s">30 seconds</string>
+    <string name="interval_1m">1 minute</string>
+    <string name="interval_2m">2 minutes</string>
+    <string name="interval_5m">5 minutes</string>
+    <string name="default_encoding">Default encoding</string>
+    <string name="line_break">Line break</string>
+    <string name="about_section">ABOUT</string>
+    <string name="about_tagline">A small, offline text editor</string>
+    <string name="about_text">No ads. No internet. Your files stay on your device, exactly where you put them.</string>
+    <string name="update_title">Update EditNote</string>
+    <string name="update_sub">Get the latest version on GitHub</string>
+    <string name="report_bug">Report a bug</string>
+    <string name="built_by">Built by KiA Ashkan, with the help of Muse</string>
+    <string name="chevron">›</string>
+    <string name="no_email_app">No email app available</string>
+    <string name="no_browser">No browser available</string>
+
+    <!-- Encoding re-read / reload flows -->
+    <string name="large_file_status">Large file: word wrap off for smooth scrolling</string>
+    <string name="reread_failed_fmt">Could not re-read file: %1$s</string>
+    <string name="encoding_skipped">Encoding change skipped — the document changed while it was being re-read</string>
+    <string name="encoding_set_fmt">Encoding: %1$s</string>
+    <string name="reread_q_fmt">Re-read with %1$s?</string>
+    <string name="reread_msg">Changing the encoding re-reads the file from disk. Unsaved changes in this tab will be lost.</string>
+    <string name="reread_btn">Re-read</string>
+    <string name="reload_failed_fmt">Could not reload file: %1$s</string>
+    <string name="reload_skipped">Reload skipped — the document changed while it was being re-read</string>
+    <string name="reload_q">Reload file?</string>
+    <string name="reload_msg">Unsaved changes in this tab will be lost.</string>
+    <string name="replace_btn">Replace</string>
 </resources>

@@ -11,8 +11,8 @@ android {
         applicationId = "com.kiaashkan.editnote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "1.4.6"
+        versionCode = 26
+        versionName = "1.4.10"
     }
 
     buildTypes {

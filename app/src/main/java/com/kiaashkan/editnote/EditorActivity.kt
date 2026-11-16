@@ -49,7 +49,7 @@ import java.util.Locale
  *   autosave + interval, auto-indent, suggestions, capitalization, encoding,
  *   line breaks, undo-by-back.
  */
-class EditorActivity : Activity() {
+class EditorActivity : BaseActivity() {
 
     private class Doc(
         var uri: Uri? = null,
@@ -161,7 +161,7 @@ class EditorActivity : Activity() {
             val wasDirty = doc.dirty
             saveDoc(doc, silent = true)
             if (wasDirty && !doc.dirty && settings.autosaveConfirm) {
-                Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.saved_toast), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -202,7 +202,6 @@ class EditorActivity : Activity() {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
         // The app never mirrors (item 95) — see MainActivity.
-        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         setContentView(R.layout.activity_editor)
         settings = AppSettings(this)
         palette = Palette(this)
@@ -215,11 +214,19 @@ class EditorActivity : Activity() {
         fastScroll.editor = editor
         fastScroll.accentColor = palette.accent
         titleView = findViewById(R.id.fileTitle)
-        // Persian file names anchor left (item 94) — forced in code
-        // too, not just XML: on KiA's Persian-locale phone the XML
-        // textDirection alone did not take effect.
-        titleView.textDirection = View.TEXT_DIRECTION_LTR
-        titleView.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+        // File-name anchoring follows the app language (item 98):
+        // LTR languages keep the item-94 left anchor (forced in
+        // code too, not just XML — the XML alone did not take
+        // effect); RTL languages (fa/ar) render names naturally.
+        if (resources.configuration.layoutDirection ==
+            View.LAYOUT_DIRECTION_RTL
+        ) {
+            titleView.textDirection = View.TEXT_DIRECTION_INHERIT
+            titleView.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+        } else {
+            titleView.textDirection = View.TEXT_DIRECTION_LTR
+            titleView.textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+        }
         statusView = findViewById(R.id.saveStatus)
         tabStrip = findViewById(R.id.tabStrip)
         accessoryScroll = findViewById(R.id.accessoryScroll)
@@ -232,7 +239,7 @@ class EditorActivity : Activity() {
         editor.accentColor = palette.accent
 
         docs.addAll(resolveInitialDocs())
-        if (docs.isEmpty()) docs.add(newDraftDoc("Untitled"))
+        if (docs.isEmpty()) docs.add(newDraftDoc(getString(R.string.untitled)))
         active = 0
         applyEditorSettings()
         loadDocIntoEditor(docs[0])
@@ -260,7 +267,7 @@ class EditorActivity : Activity() {
                     editedSinceBaseline = true
                     lastFindIndex = -1
                     if (!doc.needsDestination) {
-                        statusView.text = "Unsaved changes"
+                        statusView.text = getString(R.string.status_unsaved)
                     }
                     handler.removeCallbacks(historyRunnable)
                     handler.postDelayed(historyRunnable, HISTORY_DELAY_MS)
@@ -386,6 +393,15 @@ class EditorActivity : Activity() {
         )
     }
 
+
+    /** File-name rendering follows the app language (item 98): in
+     *  LTR languages a leading LEFT-TO-RIGHT MARK keeps Persian
+     *  names anchored left (item 94); in RTL languages (fa/ar) the
+     *  name renders naturally, with no mark. */
+    private fun displayFileName(name: String): String =
+        if (resources.configuration.layoutDirection ==
+            View.LAYOUT_DIRECTION_RTL
+        ) name else "\u200E" + name
     private fun resolveInitialDocs(): List<Doc> {
         val external = intent.getStringExtra(EXTRA_EXTERNAL_URI)
         val newName = intent.getStringExtra(EXTRA_NEW_NAME)
@@ -399,7 +415,6 @@ class EditorActivity : Activity() {
             intent.data != null -> {
                 val uri = intent.data!!
                 val name = RecentFiles.displayName(this, uri)
-                RecentFiles(this).add(uri, name)
                 // Item 65: "Open with" from another app (Drive,
                 // Gmail, …) arrives with per-URI grant flags. Take
                 // the persistable permission when the sender offers
@@ -423,6 +438,19 @@ class EditorActivity : Activity() {
                         } catch (e: SecurityException) { /* temporary grant only */ }
                     }
                 }
+                // Item 96 (KiA): a file that is not really on this
+                // phone — a note opened from Telegram & co. — arrives
+                // with a TEMPORARY grant only; nothing above could be
+                // persisted. Such a file must NOT enter Recents:
+                // tapping it later can only fail with an access
+                // error. It joins Recents only when reopening it
+                // later will actually work — a real file:// path, or
+                // a persistable read grant now held for its URI.
+                val reopenable = uri.scheme == "file" ||
+                    contentResolver.persistedUriPermissions.any {
+                        it.uri == uri && it.isReadPermission
+                    }
+                if (reopenable) RecentFiles(this).add(uri, name)
                 listOf(pendingDoc(uri, name).apply {
                     // Grant flags only exist for content:// URIs;
                     // a file:// path is judged by its first write
@@ -431,7 +459,7 @@ class EditorActivity : Activity() {
                 })
             }
             newName != null -> listOf(newDraftDoc(newName))
-            else -> listOf(newDraftDoc("Untitled"))
+            else -> listOf(newDraftDoc(getString(R.string.untitled)))
         }
     }
 
@@ -495,15 +523,14 @@ class EditorActivity : Activity() {
                 if (result == null) {
                     Toast.makeText(
                         this,
-                        "Access to “${doc.name}” was lost. Open it once " +
-                            "via Open file — after that it stays in Recents.",
+                        getString(R.string.access_lost_fmt, doc.name),
                         Toast.LENGTH_LONG
                     ).show()
                     doc.pendingLoad = false
                     val idx = docs.indexOf(doc)
                     if (idx >= 0) {
                         if (docs.size == 1) {
-                            val draft = newDraftDoc("Untitled")
+                            val draft = newDraftDoc(getString(R.string.untitled))
                             docs[0] = draft
                             active = 0
                             loadDocIntoEditor(draft)
@@ -553,15 +580,15 @@ class EditorActivity : Activity() {
         updateUndoRedoButtons()
         // Leading LRM pins Persian names to the left (item 94) —
         // see MainActivity's recents binding.
-        titleView.text = "\u200E" + doc.name
+        titleView.text = displayFileName(doc.name)
         when {
-            doc.pendingLoad -> statusView.text = "Loading…"
+            doc.pendingLoad -> statusView.text = getString(R.string.status_loading)
             doc.needsDestination && doc.text.isNotBlank() ->
-                statusView.text = "Draft · tap Save to choose where to keep it"
-            doc.needsDestination -> statusView.text = "New file · not saved yet"
-            doc.dirty -> statusView.text = "Unsaved changes"
+                statusView.text = getString(R.string.status_draft)
+            doc.needsDestination -> statusView.text = getString(R.string.status_new_file)
+            doc.dirty -> statusView.text = getString(R.string.status_unsaved)
             doc.readOnlySource -> statusView.text =
-                "Read-only from source · Save saves a copy"
+                getString(R.string.readonly_src_status)
             else -> setStatusSaved()
         }
         // A document still loading in the background (item 64)
@@ -584,7 +611,7 @@ class EditorActivity : Activity() {
             doc.largeWrapToastShown = true
             Toast.makeText(
                 this,
-                "Large file: word wrap off for smooth scrolling",
+                getString(R.string.large_file_status),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -631,14 +658,14 @@ class EditorActivity : Activity() {
         if (doc.needsDestination && doc.text.isNotBlank()) {
             CardDialogs.confirm(
                 this, palette,
-                "Save “${doc.name}”?",
-                "This new file has not been saved anywhere yet.",
-                "Save…",
+                getString(R.string.save_q_fmt, doc.name),
+                getString(R.string.save_new_file_msg),
+                getString(R.string.save_ellipsis),
                 onPositive = {
                     pendingCloseIndex = index
                     promptSaveDestination(doc)
                 },
-                negativeLabel = "Discard",
+                negativeLabel = getString(R.string.discard_btn),
                 onNegative = {
                     doc.needsDestination = false
                     doc.text = ""
@@ -701,10 +728,15 @@ class EditorActivity : Activity() {
                     val label = if (docs.size > 1 && baseName.length > 7) {
                         baseName.take(7) + "…"
                     } else baseName
-                    text = (if (doc.dirty) "• " else "") + "\u200E" + label
-                    // File names always read LTR (item 94), even
-                    // Persian ones — same rule as the editor (93).
-                    textDirection = View.TEXT_DIRECTION_LTR
+                    text = (if (doc.dirty) "• " else "") + displayFileName(label)
+                    // File names follow the app language
+                    // (item 98): LTR languages keep the item-94
+                    // left anchor; RTL languages render naturally.
+                    textDirection = if (
+                        resources.configuration.layoutDirection ==
+                        View.LAYOUT_DIRECTION_RTL
+                    ) View.TEXT_DIRECTION_INHERIT
+                    else View.TEXT_DIRECTION_LTR
                     textSize = 13.5f
                     if (isActive) {
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -765,7 +797,7 @@ class EditorActivity : Activity() {
             if (doc === docs.getOrNull(active)) {
                 if (silent) {
                     statusView.text =
-                        "Read-only from source · tap Save to save a copy"
+                        getString(R.string.readonly_src_autosave)
                 } else {
                     promptSaveAs()
                 }
@@ -779,7 +811,7 @@ class EditorActivity : Activity() {
                     doc.draftFile!!.parentFile?.mkdirs()
                     doc.draftFile!!.writeText(doc.text)
                     if (doc === docs.getOrNull(active) && !silent) {
-                        statusView.text = "Draft saved · tap Save to choose where to keep it"
+                        statusView.text = getString(R.string.status_draft_saved)
                     }
                     return
                 }
@@ -787,7 +819,7 @@ class EditorActivity : Activity() {
             }
             doc.dirty = false
             if (doc === docs.getOrNull(active)) setStatusSaved()
-            if (!silent) Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+            if (!silent) Toast.makeText(this, getString(R.string.saved_toast), Toast.LENGTH_SHORT).show()
             renderTabs()
         } catch (e: Exception) {
             if (!silent && e is SecurityException && doc.uri != null &&
@@ -802,9 +834,9 @@ class EditorActivity : Activity() {
                 doc.readOnlySource = true
                 promptSaveAs()
             } else {
-                if (doc === docs.getOrNull(active)) statusView.text = "Save failed"
+                if (doc === docs.getOrNull(active)) statusView.text = getString(R.string.save_failed)
                 if (!silent) {
-                    Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, getString(R.string.save_failed_fmt, e.message), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -820,21 +852,21 @@ class EditorActivity : Activity() {
      *  user chooses the folder/location. Nothing is stored inside EditNote. */
     private fun promptSaveDestination(doc: Doc) {
         stashActive()
-        val input = CardDialogs.inputField(this, palette, "File name", doc.name)
+        val input = CardDialogs.inputField(this, palette, getString(R.string.file_name), doc.name)
         CardDialogs.show(
             this, palette,
-            "Save new file",
-            "Name the file, then choose where to save it.",
+            getString(R.string.save_new_file),
+            getString(R.string.save_new_file_hint),
             content = { it.addView(input) },
             focusView = input,
             buttons = listOf(
-                CardDialogs.ButtonSpec("Cancel") { d ->
+                CardDialogs.ButtonSpec(getString(R.string.cancel)) { d ->
                     d.dismiss()
                     pendingDestinationDoc = null
                     pendingCloseIndex = -1
                     pendingFinish = false
                 },
-                CardDialogs.ButtonSpec("Choose location…", primary = true) { d ->
+                CardDialogs.ButtonSpec(getString(R.string.choose_location), primary = true) { d ->
                     d.dismiss()
                     val typed = input.text.toString().trim()
                     if (typed.isNotEmpty()) doc.name = sanitizeFileName(typed)
@@ -861,14 +893,14 @@ class EditorActivity : Activity() {
         if (pending != null) {
             CardDialogs.confirm(
                 this, palette,
-                "Save “${pending.name}”?",
-                "This new file has not been saved anywhere yet.",
-                "Save…",
+                getString(R.string.save_q_fmt, pending.name),
+                getString(R.string.save_new_file_msg),
+                getString(R.string.save_ellipsis),
                 onPositive = {
                     pendingFinish = true
                     promptSaveDestination(pending)
                 },
-                negativeLabel = "Discard",
+                negativeLabel = getString(R.string.discard_btn),
                 onNegative = {
                     pending.needsDestination = false
                     pending.text = ""
@@ -885,8 +917,14 @@ class EditorActivity : Activity() {
     }
 
     private fun setStatusSaved() {
+        // Item 98: the status follows the app language like
+        // everything else (locale digits included).
         val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        statusView.text = if (settings.autosave) "Saved $time · Autosave on" else "Saved $time"
+        statusView.text = if (settings.autosave) {
+            getString(R.string.saved_at_autosave_fmt, time)
+        } else {
+            getString(R.string.saved_at_fmt, time)
+        }
     }
 
     // --- Undo / redo -----------------------------------------------------------------
@@ -1438,6 +1476,8 @@ class EditorActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             background = palette.cardDrawable(14f, density)
             setPadding(0, dp(6), 0, dp(6))
+            // Item 98: no forced direction — the menu follows the
+            // app language like every other window (RTL for fa/ar).
         }
         val popup = android.widget.PopupWindow(
             container, dp(248),
@@ -1488,16 +1528,16 @@ class EditorActivity : Activity() {
         showCardMenu(
             anchor,
             listOf(
-                MenuRow("New") { addDoc(newDraftDoc("Untitled")) },
-                MenuRow("Open…") { pickExternalFile() },
-                MenuRow("Save") { onSavePressed() },
-                MenuRow("Save as…") { promptSaveAs() },
-                MenuRow("Bookmarked", isActiveBookmarked()) { toggleActiveBookmark() },
-                MenuRow("Reload") { reloadActive() },
-                MenuRow("Close tab") { closeTab(active) },
-                MenuRow("Share") { shareText() },
-                MenuRow("Print") { printActive() },
-                MenuRow("Settings") {
+                MenuRow(getString(R.string.menu_new)) { addDoc(newDraftDoc(getString(R.string.untitled))) },
+                MenuRow(getString(R.string.menu_open)) { pickExternalFile() },
+                MenuRow(getString(R.string.menu_save)) { onSavePressed() },
+                MenuRow(getString(R.string.menu_save_as)) { promptSaveAs() },
+                MenuRow(getString(R.string.menu_bookmarked), isActiveBookmarked()) { toggleActiveBookmark() },
+                MenuRow(getString(R.string.menu_reload)) { reloadActive() },
+                MenuRow(getString(R.string.menu_close_tab)) { closeTab(active) },
+                MenuRow(getString(R.string.menu_share)) { shareText() },
+                MenuRow(getString(R.string.menu_print)) { printActive() },
+                MenuRow(getString(R.string.menu_settings)) {
                     startActivity(Intent(this, SettingsActivity::class.java))
                 }
             )
@@ -1518,7 +1558,7 @@ class EditorActivity : Activity() {
         val doc = docs.getOrNull(active) ?: return
         val uri = doc.uri ?: run {
             Toast.makeText(
-                this, "Save the file first to bookmark it", Toast.LENGTH_SHORT
+                this, getString(R.string.bookmark_first_toast), Toast.LENGTH_SHORT
             ).show()
             return
         }
@@ -1529,7 +1569,7 @@ class EditorActivity : Activity() {
         store.setBookmarked(uri.toString(), now)
         Toast.makeText(
             this,
-            if (now) "Bookmarked" else "Bookmark removed",
+            if (now) getString(R.string.bookmarked_toast) else getString(R.string.bookmark_removed_toast),
             Toast.LENGTH_SHORT
         ).show()
     }
@@ -1539,20 +1579,20 @@ class EditorActivity : Activity() {
         showCardMenu(
             anchor,
             listOf(
-                MenuRow("Select all") { editor.selectAllText() },
-                MenuRow("Paste") { pasteFromClipboard() },
-                MenuRow("Insert date & time") {
+                MenuRow(getString(R.string.menu_select_all)) { editor.selectAllText() },
+                MenuRow(getString(R.string.menu_paste)) { pasteFromClipboard() },
+                MenuRow(getString(R.string.menu_insert_datetime)) {
                     insertAtCursor(
                         SimpleDateFormat(
                             "yyyy-MM-dd HH:mm", Locale.getDefault()
                         ).format(Date())
                     )
                 },
-                MenuRow("Increase indent") { changeIndent(increase = true) },
-                MenuRow("Decrease indent") { changeIndent(increase = false) },
-                MenuRow("Go to line…") { promptGoToLine() },
-                MenuRow("Find & Replace…") { promptReplace() },
-                MenuRow("Statistics") { showStats() }
+                MenuRow(getString(R.string.menu_indent_inc)) { changeIndent(increase = true) },
+                MenuRow(getString(R.string.menu_indent_dec)) { changeIndent(increase = false) },
+                MenuRow(getString(R.string.menu_goto_line)) { promptGoToLine() },
+                MenuRow(getString(R.string.menu_find_replace)) { promptReplace() },
+                MenuRow(getString(R.string.menu_statistics)) { showStats() }
             )
         )
     }
@@ -1562,14 +1602,14 @@ class EditorActivity : Activity() {
         showCardMenu(
             anchor,
             listOf(
-                MenuRow("Visual style…") { promptVisualStyle() },
-                MenuRow("Encoding…") { promptEncoding() },
-                MenuRow("Syntax…") { promptSyntax() },
-                MenuRow("Word wrap", settings.wordWrap) {
+                MenuRow(getString(R.string.menu_visual_style)) { promptVisualStyle() },
+                MenuRow(getString(R.string.menu_encoding)) { promptEncoding() },
+                MenuRow(getString(R.string.menu_syntax)) { promptSyntax() },
+                MenuRow(getString(R.string.menu_word_wrap), settings.wordWrap) {
                     settings.wordWrap = !settings.wordWrap
                     editor.wordWrap = settings.wordWrap
                 },
-                MenuRow("Read only", readOnly) { setReadOnly(!readOnly) }
+                MenuRow(getString(R.string.menu_read_only), readOnly) { setReadOnly(!readOnly) }
             )
         )
     }
@@ -1579,7 +1619,7 @@ class EditorActivity : Activity() {
         val names = EditorStyles.menuNames().toTypedArray()
         val ids = listOf(EditorStyles.DEFAULT_ID) + EditorStyles.ALL.map { it.id }
         val current = ids.indexOf(AppSettings(this).visualStyle).coerceAtLeast(0)
-        CardDialogs.picker(this, palette, "Visual Styles", names.toList(), current) { which ->
+        CardDialogs.picker(this, palette, getString(R.string.visual_styles), names.toList(), current) { which ->
             AppSettings(this).visualStyle = ids[which]
             settings = AppSettings(this)
             applyEditorStyle()
@@ -1601,7 +1641,7 @@ class EditorActivity : Activity() {
         val current = names.indexOfFirst {
             it.equals(docEncDisplay, ignoreCase = true)
         }.coerceAtLeast(0)
-        CardDialogs.picker(this, palette, "Encoding", names.toList(), current) { which ->
+        CardDialogs.picker(this, palette, getString(R.string.encoding_title), names.toList(), current) { which ->
             applyEncodingChoice(doc, names[which])
         }
     }
@@ -1612,7 +1652,7 @@ class EditorActivity : Activity() {
         if (uri == null) {
             // New file: nothing to re-read; the choice applies on save.
             doc.encoding = chosen
-            Toast.makeText(this, "Encoding: $chosen (applies when saved)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.encoding_toast_fmt, chosen), Toast.LENGTH_SHORT).show()
             return
         }
         val reread = {
@@ -1643,14 +1683,13 @@ class EditorActivity : Activity() {
                     stashActiveIf(doc)
                     if (text == null) {
                         Toast.makeText(
-                            this, "Could not re-read file: $error",
+                            this, getString(R.string.reread_failed_fmt, error),
                             Toast.LENGTH_LONG
                         ).show()
                     } else if (doc.text != startText) {
                         Toast.makeText(
                             this,
-                            "Encoding change skipped — the document " +
-                                "changed while it was being re-read",
+                            getString(R.string.encoding_skipped),
                             Toast.LENGTH_LONG
                         ).show()
                     } else {
@@ -1663,7 +1702,7 @@ class EditorActivity : Activity() {
                             loadDocIntoEditor(doc)
                         }
                         Toast.makeText(
-                            this, "Encoding: $chosen", Toast.LENGTH_SHORT
+                            this, getString(R.string.encoding_set_fmt, chosen), Toast.LENGTH_SHORT
                         ).show()
                     }
                 }
@@ -1672,9 +1711,9 @@ class EditorActivity : Activity() {
         if (doc.dirty) {
             CardDialogs.confirm(
                 this, palette,
-                "Re-read with $chosen?",
-                "Changing the encoding re-reads the file from disk. Unsaved changes in this tab will be lost.",
-                "Re-read",
+                getString(R.string.reread_q_fmt, chosen),
+                getString(R.string.reread_msg),
+                getString(R.string.reread_btn),
                 onPositive = { reread() }
             )
         } else reread()
@@ -1684,14 +1723,14 @@ class EditorActivity : Activity() {
      *  None, or a specific language. Applies immediately. */
     private fun promptSyntax() {
         val doc = docs.getOrNull(active) ?: return
-        val labels = mutableListOf("Automatic", "None")
+        val labels = mutableListOf(getString(R.string.automatic), getString(R.string.none))
         val ids = mutableListOf(SyntaxHighlighter.AUTO, SyntaxHighlighter.NONE)
         SyntaxHighlighter.LANGUAGES.forEach {
             labels.add(it.display)
             ids.add(it.id)
         }
         val current = ids.indexOf(doc.syntax).coerceAtLeast(0)
-        CardDialogs.picker(this, palette, "Syntax", labels, current) { which ->
+        CardDialogs.picker(this, palette, getString(R.string.syntax_title), labels, current) { which ->
             doc.syntax = ids[which]
             // Item 67: an explicit pick is applied directly
             // (synchronously up to the mid-tier cap) — the user is
@@ -1711,13 +1750,13 @@ class EditorActivity : Activity() {
         editor.isFocusableInTouchMode = !on
         editor.isFocusable = !on
         if (on) editor.clearFocus()
-        if (on) statusView.text = "Read only" else setStatusSaved()
+        if (on) statusView.text = getString(R.string.status_read_only) else setStatusSaved()
     }
 
     private fun reloadActive() {
         val doc = docs.getOrNull(active) ?: return
         val uri = doc.uri ?: run {
-            Toast.makeText(this, "Nothing to reload for a new file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.reload_new_toast), Toast.LENGTH_SHORT).show()
             return
         }
         val doReload = {
@@ -1750,14 +1789,13 @@ class EditorActivity : Activity() {
                     stashActiveIf(doc)
                     if (result == null) {
                         Toast.makeText(
-                            this, "Could not reload file: $error",
+                            this, getString(R.string.reload_failed_fmt, error),
                             Toast.LENGTH_LONG
                         ).show()
                     } else if (doc.text != startText) {
                         Toast.makeText(
                             this,
-                            "Reload skipped — the document changed " +
-                                "while it was being re-read",
+                            getString(R.string.reload_skipped),
                             Toast.LENGTH_LONG
                         ).show()
                     } else {
@@ -1776,9 +1814,9 @@ class EditorActivity : Activity() {
         if (doc.dirty) {
             CardDialogs.confirm(
                 this, palette,
-                "Reload file?",
-                "Unsaved changes in this tab will be lost.",
-                "Reload",
+                getString(R.string.reload_q),
+                getString(R.string.reload_msg),
+                getString(R.string.menu_reload),
                 onPositive = { doReload() }
             )
         } else doReload()
@@ -1791,7 +1829,7 @@ class EditorActivity : Activity() {
         val item = clipboard.primaryClip?.getItemAt(0)
         val pasted = item?.coerceToText(this)?.toString()
         if (pasted.isNullOrEmpty()) {
-            Toast.makeText(this, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.clipboard_empty), Toast.LENGTH_SHORT).show()
             return
         }
         insertAtCursor(pasted)
@@ -1885,16 +1923,16 @@ class EditorActivity : Activity() {
 
     private fun promptGoToLine() {
         val input = CardDialogs.inputField(
-            this, palette, "Line number",
+            this, palette, getString(R.string.line_number),
             inputType = InputType.TYPE_CLASS_NUMBER
         )
         CardDialogs.show(
-            this, palette, "Go to line",
+            this, palette, getString(R.string.goto_title),
             content = { it.addView(input) },
             focusView = input,
             buttons = listOf(
-                CardDialogs.ButtonSpec("Cancel") { d -> d.dismiss() },
-                CardDialogs.ButtonSpec("Go", primary = true) { d ->
+                CardDialogs.ButtonSpec(getString(R.string.cancel)) { d -> d.dismiss() },
+                CardDialogs.ButtonSpec(getString(R.string.go_btn), primary = true) { d ->
                     d.dismiss()
                     val line = input.text.toString().toIntOrNull()
                         ?: return@ButtonSpec
@@ -1985,13 +2023,13 @@ class EditorActivity : Activity() {
                     doc.draftFile = null
                     RecentFiles(this).add(uri, doc.name)
                     if (doc === docs.getOrNull(active)) {
-                        titleView.text = "\u200E" + doc.name
+                        titleView.text = displayFileName(doc.name)
                         setStatusSaved()
                     }
                     renderTabs()
-                    Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.saved_toast), Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, getString(R.string.save_failed_fmt, e.message), Toast.LENGTH_LONG).show()
                 }
                 if (requestCode == REQ_SAVE_DEST) {
                     val closeIndex = pendingCloseIndex
@@ -2131,7 +2169,7 @@ class EditorActivity : Activity() {
         if (idx < 0) idx = text.indexOf(lastQuery, startIndex = 0, ignoreCase = true)
         if (idx < 0) {
             if (findBar.visibility != View.VISIBLE) {
-                Toast.makeText(this, "Not found: $lastQuery", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.not_found_fmt, lastQuery), Toast.LENGTH_SHORT).show()
             }
             refreshFindCounter()
             return
@@ -2150,7 +2188,7 @@ class EditorActivity : Activity() {
         if (idx < 0) idx = text.lastIndexOf(lastQuery, startIndex = text.length, ignoreCase = true)
         if (idx < 0) {
             if (findBar.visibility != View.VISIBLE) {
-                Toast.makeText(this, "Not found: $lastQuery", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.not_found_fmt, lastQuery), Toast.LENGTH_SHORT).show()
             }
             refreshFindCounter()
             return
@@ -2161,25 +2199,25 @@ class EditorActivity : Activity() {
     }
 
     private fun promptReplace() {
-        val findInput = CardDialogs.inputField(this, palette, "Find", lastQuery)
-        val replaceInput = CardDialogs.inputField(this, palette, "Replace with")
+        val findInput = CardDialogs.inputField(this, palette, getString(R.string.find_label), lastQuery)
+        val replaceInput = CardDialogs.inputField(this, palette, getString(R.string.replace_with_label))
         CardDialogs.show(
-            this, palette, "Find & Replace",
+            this, palette, getString(R.string.find_replace_title),
             content = { body ->
                 body.addView(findInput)
                 body.addView(replaceInput)
             },
             focusView = findInput,
             buttons = listOf(
-                CardDialogs.ButtonSpec("Cancel") { d -> d.dismiss() },
-                CardDialogs.ButtonSpec("Replace all") { d ->
+                CardDialogs.ButtonSpec(getString(R.string.cancel)) { d -> d.dismiss() },
+                CardDialogs.ButtonSpec(getString(R.string.replace_all_btn)) { d ->
                     val find = findInput.text.toString()
                     if (find.isEmpty()) return@ButtonSpec
                     d.dismiss()
                     lastQuery = find
                     replaceAll(find, replaceInput.text.toString())
                 },
-                CardDialogs.ButtonSpec("Replace", primary = true) { d ->
+                CardDialogs.ButtonSpec(getString(R.string.replace_btn), primary = true) { d ->
                     val find = findInput.text.toString()
                     if (find.isEmpty()) return@ButtonSpec
                     d.dismiss()
@@ -2197,7 +2235,7 @@ class EditorActivity : Activity() {
         var idx = text.indexOf(find, startIndex = start, ignoreCase = true)
         if (idx < 0) idx = text.indexOf(find, startIndex = 0, ignoreCase = true)
         if (idx < 0) {
-            Toast.makeText(this, "Not found: $find", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.not_found_fmt, find), Toast.LENGTH_SHORT).show()
             return
         }
         editor.replaceRange(idx, idx + find.length, replacement)
@@ -2211,7 +2249,7 @@ class EditorActivity : Activity() {
         val current = editor.textString()
         val updated = current.replace(find, replacement, ignoreCase = true)
         if (updated == current) {
-            Toast.makeText(this, "Not found: $find", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.not_found_fmt, find), Toast.LENGTH_SHORT).show()
             return
         }
         val count = Regex(Regex.escape(find), RegexOption.IGNORE_CASE).findAll(current).count()
@@ -2226,7 +2264,7 @@ class EditorActivity : Activity() {
         editor.replaceRange(0, current.length, updated)
         editor.setSelection(savedSel.coerceIn(0, updated.length))
         editor.scrollToY(savedScroll)
-        Toast.makeText(this, "Replaced $count occurrence(s)", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.replaced_fmt, count), Toast.LENGTH_SHORT).show()
     }
 
     private fun showStats() {
@@ -2237,19 +2275,19 @@ class EditorActivity : Activity() {
         val lines = if (text.isEmpty()) 0 else text.count { it == '\n' } + 1
         val syntaxLabel = when (doc.syntax) {
             SyntaxHighlighter.AUTO ->
-                SyntaxHighlighter.languageForExtension(doc.name)?.display?.let { "$it (automatic)" }
-                    ?: SyntaxHighlighter.detect(text)?.display?.let { "$it (automatic)" }
-                    ?: "None (automatic)"
-            SyntaxHighlighter.NONE -> "None"
+                SyntaxHighlighter.languageForExtension(doc.name)?.display?.let { getString(R.string.auto_suffix_fmt, it) }
+                    ?: SyntaxHighlighter.detect(text)?.display?.let { getString(R.string.auto_suffix_fmt, it) }
+                    ?: getString(R.string.none_auto)
+            SyntaxHighlighter.NONE -> getString(R.string.none)
             else -> SyntaxHighlighter.languageById(doc.syntax)?.display ?: doc.syntax
         }
-        val styleLabel = currentStyle()?.name ?: "Default"
+        val styleLabel = currentStyle()?.name ?: getString(R.string.style_default)
         CardDialogs.info(
-            this, palette, "Statistics",
-            "Characters: ${text.length}\nWords: $words\nLines: $lines\n" +
-                "Encoding: ${doc.encoding}\nSyntax: $syntaxLabel\nVisual style: $styleLabel" +
-                "\nColour ranges: ${editor.highlightRanges.size}" +
-                "\nHighlight: $highlightDiag"
+            this, palette, getString(R.string.stats_title),
+            getString(
+                R.string.stats_body, text.length, words, lines, doc.encoding,
+                syntaxLabel, styleLabel, editor.highlightRanges.size, highlightDiag
+            )
         )
     }
 
@@ -2260,7 +2298,7 @@ class EditorActivity : Activity() {
             putExtra(Intent.EXTRA_SUBJECT, doc.name)
             putExtra(Intent.EXTRA_TEXT, editor.textString())
         }
-        startActivity(Intent.createChooser(intent, "Share"))
+        startActivity(Intent.createChooser(intent, getString(R.string.menu_share)))
     }
 
     companion object {
