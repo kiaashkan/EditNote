@@ -761,7 +761,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="EditNote 1.4.10"
+                        android:text="EditNote 1.4.11"
                         android:textSize="17sp"
                         android:textStyle="bold" />
 
@@ -860,7 +860,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="kiaashkan6@gmail.com"
+                        android:text="Info@kiaashkan.kdns.fr"
                         android:textSize="12sp" />
                 </LinearLayout>
             </LinearLayout>

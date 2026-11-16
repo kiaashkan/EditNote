@@ -71,7 +71,7 @@ class SettingsActivity : BaseActivity() {
                     android.content.Intent(
                         android.content.Intent.ACTION_SENDTO,
                         android.net.Uri.parse(
-                            "mailto:kiaashkan6@gmail.com?subject=$subject&body=$body"
+                            "mailto:Info@kiaashkan.kdns.fr?subject=$subject&body=$body"
                         )
                     )
                 )

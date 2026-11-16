@@ -19,6 +19,18 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">#F1F1F4</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <!-- Item 100: the app ships its own complete light/dark
+             themes, so an OEM force-dark pass can only corrupt it
+             (darkened surfaces with dark text left behind — menus
+             invisible on some phones). Opt out, and pin the
+             framework text and floating-surface colours to the
+             Palette values, so system-rendered surfaces (the
+             text-selection toolbar above all) match the app on
+             every phone instead of trusting OEM defaults. -->
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:textColorPrimary">#1C1B1F</item>
+        <item name="android:textColorSecondary">#6E6E73</item>
+        <item name="android:colorBackgroundFloating">#FFFFFF</item>
     </style>
     <style name="Theme.EditNote.Light.Green" parent="Theme.EditNote.Light.Orange">
         <item name="android:colorAccent">#006633</item>
@@ -42,6 +54,12 @@
         <item name="android:windowBackground">#111111</item>
         <item name="android:statusBarColor">#111111</item>
         <item name="android:navigationBarColor">#111111</item>
+        <!-- Item 100: see the Light base style — no OEM force-dark,
+             framework colours pinned to the dark Palette values. -->
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:textColorPrimary">#EEEEEE</item>
+        <item name="android:textColorSecondary">#9E9EA0</item>
+        <item name="android:colorBackgroundFloating">#1E1E20</item>
     </style>
     <style name="Theme.EditNote.Dark.Green" parent="Theme.EditNote.Dark.Orange">
         <item name="android:colorAccent">#006633</item>
