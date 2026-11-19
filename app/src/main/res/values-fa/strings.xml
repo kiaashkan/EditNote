@@ -155,4 +155,24 @@
     <string name="reload_msg">تغییرات ذخیره‌نشده‌ی این زبانه از دست می‌رود.</string>
     <string name="replace_btn">جایگزینی</string>
     <string name="language">زبان</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">یادآوری</string>
+    <string name="reminder_title">یادآوری این یادداشت</string>
+    <string name="reminder_set">تنظیم</string>
+    <string name="reminder_remove">حذف یادآوری</string>
+    <string name="reminder_save_first">برای یادآوری، اول فایل را ذخیره کنید</string>
+    <string name="reminder_past">این زمان گذشته است</string>
+    <string name="reminder_set_toast_fmt">یادآوری برای %1$s تنظیم شد</string>
+    <string name="reminder_removed_toast">یادآوری حذف شد</string>
+    <string name="reminder_current_fmt">یادآوری فعلی: %1$s</string>
+    <string name="notif_channel_reminders">یادآوری یادداشت‌ها</string>
+    <string name="notif_ask_body">می‌خوای یه یادداشت سر وقت بهت یادآوری کنه — مثلاً لیست خرید قبل از بیرون رفتن؟ اعلان‌ها رو اجازه بده تا روی هر یادداشتی یادآوری بذاری.</string>
+    <string name="notif_ask_allow">اجازه می‌دم</string>
+    <string name="notif_ask_later">الان نه</string>
+    <string name="reminder_invalid">این تاریخ یا ساعت درست نیست</string>
+    <string name="reminder_notif_needed">اعلان‌ها خاموشه، پس فعلاً نمی‌شه یادآوری گذاشت. فعالش کن تا این یادداشت سر وقت بهت خبر بده.</string>
+    <string name="reminder_notif_enable">روشن‌کردن اعلان</string>
+    <string name="reminder_notif_settings">باز کردن تنظیمات</string>
+    <string name="reminder_not_set_toast">یادآوری تنظیم نشد — اعلان‌ها خاموشه</string>
 </resources>

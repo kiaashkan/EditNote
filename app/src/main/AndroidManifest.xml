@@ -1,16 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No permissions at all on purpose: EditNote is fully
-         offline and zero-permission (KiA reaffirmed this on
-         2026-11-15, cancelling the item-66 all-files-access idea
-         the same night it was drafted). Files come through the
-         system picker (persistable grants, item 61) or other apps'
-         intents; read-only sources are handled by item 65's
-         create-a-copy save flow. -->
+    <!-- Permissions: EditNote was zero-permission by design
+         (KiA reaffirmed this on 2026-11-15, cancelling the
+         item-66 all-files-access idea the same night it was
+         drafted). Item 110 (KiA's explicit order, 2026-11-19)
+         adds note reminders, which inherently need the four
+         permissions below — and ONLY those: still no INTERNET,
+         still fully offline, no storage or location access.
+         Files come through the system picker (persistable
+         grants, item 61) or other apps' intents; read-only
+         sources are handled by item 65's create-a-copy save
+         flow. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- Item 101 (KiA, 2026-11-17): no Android Auto Backup either —
+         the app is fully offline, so its private data (drafts,
+         recents, settings) must not ride along into the phone's
+         Google Drive backup or a device-to-device transfer. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -28,6 +42,22 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false" />
+
+        <!-- Item 110: note reminders. The alarm receiver is
+             private; the boot receiver must be exported so the
+             system can deliver BOOT_COMPLETED (a protected
+             broadcast only the system can send). -->
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <activity
             android:name=".EditorActivity"

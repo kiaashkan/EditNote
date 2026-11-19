@@ -153,6 +153,14 @@
             android:src="@drawable/ic_close" />
     </LinearLayout>
 
+    <!-- Accent rule under the find bar (item 103): shown and hidden
+         together with the bar; its colour is set from Palette. -->
+    <View
+        android:id="@+id/findBarDivider"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:visibility="gone" />
+
     <!-- Editor with line-number gutter + fast-scroll handle -->
     <FrameLayout
         android:layout_width="match_parent"

@@ -173,4 +173,24 @@
     <string name="reload_q">Reload file?</string>
     <string name="reload_msg">Unsaved changes in this tab will be lost.</string>
     <string name="replace_btn">Replace</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">Reminder</string>
+    <string name="reminder_title">Note reminder</string>
+    <string name="reminder_set">Set</string>
+    <string name="reminder_remove">Remove</string>
+    <string name="reminder_save_first">Save the file first to set a reminder</string>
+    <string name="reminder_past">That time has already passed</string>
+    <string name="reminder_set_toast_fmt">Reminder set for %1$s</string>
+    <string name="reminder_removed_toast">Reminder removed</string>
+    <string name="reminder_current_fmt">Current reminder: %1$s</string>
+    <string name="notif_channel_reminders">Note reminders</string>
+    <string name="notif_ask_body">Want a note to remind you at the right time — like a shopping list before you go out? Allow notifications and you can set a reminder on any note.</string>
+    <string name="notif_ask_allow">Allow</string>
+    <string name="notif_ask_later">Not now</string>
+    <string name="reminder_invalid">That date or time isn\'t valid</string>
+    <string name="reminder_notif_needed">Notifications are off, so a reminder can\'t be set yet. Turn them on and this note will ping you right on time.</string>
+    <string name="reminder_notif_enable">Turn on notifications</string>
+    <string name="reminder_notif_settings">Open settings</string>
+    <string name="reminder_not_set_toast">Reminder not set — notifications are off</string>
 </resources>

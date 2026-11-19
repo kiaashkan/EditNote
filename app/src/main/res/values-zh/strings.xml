@@ -155,4 +155,24 @@
     <string name="reload_msg">此标签页中未保存的更改将丢失。</string>
     <string name="replace_btn">替换</string>
     <string name="language">语言</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">提醒</string>
+    <string name="reminder_title">笔记提醒</string>
+    <string name="reminder_set">设置</string>
+    <string name="reminder_remove">移除提醒</string>
+    <string name="reminder_save_first">请先保存文件再设置提醒</string>
+    <string name="reminder_past">该时间已过</string>
+    <string name="reminder_set_toast_fmt">已设置 %1$s 的提醒</string>
+    <string name="reminder_removed_toast">提醒已移除</string>
+    <string name="reminder_current_fmt">当前提醒：%1$s</string>
+    <string name="notif_channel_reminders">笔记提醒</string>
+    <string name="notif_ask_body">想让笔记在合适的时间提醒你吗——比如出门前的购物清单？允许通知后，即可为任何笔记设置提醒。</string>
+    <string name="notif_ask_allow">允许</string>
+    <string name="notif_ask_later">暂不</string>
+    <string name="reminder_invalid">该日期或时间无效</string>
+    <string name="reminder_notif_needed">通知已关闭，因此暂时无法设置提醒。开启后，这条笔记会准时提醒你。</string>
+    <string name="reminder_notif_enable">开启通知</string>
+    <string name="reminder_notif_settings">打开设置</string>
+    <string name="reminder_not_set_toast">提醒未设置——通知已关闭</string>
 </resources>

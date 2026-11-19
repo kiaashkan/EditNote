@@ -155,4 +155,24 @@
     <string name="reload_msg">Bu sekmedeki kaydedilmemiş değişiklikler kaybolur.</string>
     <string name="replace_btn">Değiştir</string>
     <string name="language">Dil</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">Hatırlatıcı</string>
+    <string name="reminder_title">Not hatırlatıcısı</string>
+    <string name="reminder_set">Ayarla</string>
+    <string name="reminder_remove">Hatırlatıcıyı kaldır</string>
+    <string name="reminder_save_first">Hatırlatıcı için önce dosyayı kaydedin</string>
+    <string name="reminder_past">Bu saat geçti</string>
+    <string name="reminder_set_toast_fmt">Hatırlatıcı %1$s için ayarlandı</string>
+    <string name="reminder_removed_toast">Hatırlatıcı kaldırıldı</string>
+    <string name="reminder_current_fmt">Geçerli hatırlatıcı: %1$s</string>
+    <string name="notif_channel_reminders">Not hatırlatıcıları</string>
+    <string name="notif_ask_body">Bir notun doğru zamanda hatırlatmasını ister misiniz — örneğin dışarı çıkmadan önce alışveriş listesi? Bildirimlere izin verin, herhangi bir nota hatırlatıcı ekleyin.</string>
+    <string name="notif_ask_allow">İzin ver</string>
+    <string name="notif_ask_later">Şimdi değil</string>
+    <string name="reminder_invalid">Bu tarih veya saat geçerli değil</string>
+    <string name="reminder_notif_needed">Bildirimler kapalı, bu yüzden henüz hatırlatıcı ayarlanamaz. Açın, bu not tam zamanında sizi uyarsın.</string>
+    <string name="reminder_notif_enable">Bildirimleri aç</string>
+    <string name="reminder_notif_settings">Ayarları aç</string>
+    <string name="reminder_not_set_toast">Hatırlatıcı ayarlanmadı — bildirimler kapalı</string>
 </resources>

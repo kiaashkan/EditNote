@@ -78,6 +78,21 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_SUGGESTIONS, false)
         set(v) = prefs.edit().putBoolean(KEY_SUGGESTIONS, v).apply()
 
+    /** Item 110: the first-run notification-permission card for
+     *  note reminders has been shown (whatever the user chose). */
+    var notifAskDone: Boolean
+        get() = prefs.getBoolean(KEY_NOTIF_ASK, false)
+        set(v) = prefs.edit().putBoolean(KEY_NOTIF_ASK, v).apply()
+
+    /** Item 112: the SYSTEM notification-permission dialog has
+     *  actually been requested at least once (the first-run
+     *  card's "Not now" does not count). Together with the
+     *  rationale flag this distinguishes "never asked" from
+     *  "permanently denied", which needs the Settings route. */
+    var notifRequested: Boolean
+        get() = prefs.getBoolean(KEY_NOTIF_REQ, false)
+        set(v) = prefs.edit().putBoolean(KEY_NOTIF_REQ, v).apply()
+
     var autoCapitalize: Boolean
         get() = prefs.getBoolean(KEY_AUTO_CAP, false)
         set(v) = prefs.edit().putBoolean(KEY_AUTO_CAP, v).apply()
@@ -142,6 +157,8 @@ class AppSettings(context: Context) {
         private const val KEY_AUTO_INDENT = "auto_indent"
         private const val KEY_INDENT_TAB = "indent_tab"
         private const val KEY_SUGGESTIONS = "suggestions"
+        private const val KEY_NOTIF_ASK = "notif_ask_done"
+        private const val KEY_NOTIF_REQ = "notif_requested"
         private const val KEY_AUTO_CAP = "auto_capitalize"
         private const val KEY_ACCESSORY = "accessory_view"
         private const val KEY_UNDO_BY_BACK = "undo_by_back"

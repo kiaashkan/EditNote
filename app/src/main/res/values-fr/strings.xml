@@ -155,4 +155,24 @@
     <string name="reload_msg">Les modifications non enregistrées de cet onglet seront perdues.</string>
     <string name="replace_btn">Remplacer</string>
     <string name="language">Langue</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">Rappel</string>
+    <string name="reminder_title">Rappel de la note</string>
+    <string name="reminder_set">Définir</string>
+    <string name="reminder_remove">Retirer le rappel</string>
+    <string name="reminder_save_first">Enregistrez d\'abord le fichier pour définir un rappel</string>
+    <string name="reminder_past">Cette heure est déjà passée</string>
+    <string name="reminder_set_toast_fmt">Rappel défini pour %1$s</string>
+    <string name="reminder_removed_toast">Rappel retiré</string>
+    <string name="reminder_current_fmt">Rappel actuel : %1$s</string>
+    <string name="notif_channel_reminders">Rappels de notes</string>
+    <string name="notif_ask_body">Vous voulez qu\'une note vous rappelle au bon moment — comme une liste de courses avant de sortir ? Autorisez les notifications et définissez un rappel sur n\'importe quelle note.</string>
+    <string name="notif_ask_allow">Autoriser</string>
+    <string name="notif_ask_later">Pas maintenant</string>
+    <string name="reminder_invalid">Cette date ou cette heure n\'est pas valide</string>
+    <string name="reminder_notif_needed">Les notifications sont désactivées, impossible de définir un rappel pour le moment. Activez-les et cette note vous préviendra à temps.</string>
+    <string name="reminder_notif_enable">Activer les notifications</string>
+    <string name="reminder_notif_settings">Ouvrir les réglages</string>
+    <string name="reminder_not_set_toast">Rappel non défini — notifications désactivées</string>
 </resources>

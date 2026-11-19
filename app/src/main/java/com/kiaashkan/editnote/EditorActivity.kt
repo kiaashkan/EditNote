@@ -21,6 +21,9 @@ import android.os.SystemClock
 import android.animation.ValueAnimator
 import android.view.animation.DecelerateInterpolator
 import android.view.View
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -31,9 +34,11 @@ import android.widget.TextView
 import android.widget.Toast
 import com.kiaashkan.editnote.data.AppSettings
 import com.kiaashkan.editnote.data.RecentFiles
+import com.kiaashkan.editnote.data.Reminders
 import com.kiaashkan.editnote.data.TextFileIo
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -95,6 +100,7 @@ class EditorActivity : BaseActivity() {
     private lateinit var accessoryScroll: View
     private lateinit var accessoryBar: LinearLayout
     private lateinit var findBar: View
+    private lateinit var findBarDivider: View
     private lateinit var findField: EditText
     private lateinit var findCounter: TextView
     private lateinit var loadProgress: ProgressBar
@@ -306,6 +312,13 @@ class EditorActivity : BaseActivity() {
         findViewById<ImageButton>(R.id.btnOpenFile).setOnClickListener { pickExternalFile() }
         findViewById<ImageButton>(R.id.btnSave).setOnClickListener { onSavePressed() }
         findBar = findViewById(R.id.findBar)
+        findBarDivider = findViewById(R.id.findBarDivider)
+        // Item 103 (KiA): the find bar had no background of its
+        // own, so it melted into the header above it. Give it the
+        // card colour and an accent rule underneath, so the bar
+        // reads as its own strip in both themes.
+        findBar.setBackgroundColor(palette.card)
+        findBarDivider.setBackgroundColor(palette.accent)
         findField = findViewById(R.id.findField)
         findCounter = findViewById(R.id.findCounter)
         findCounter.setTextColor(palette.textSecondary)
@@ -342,6 +355,9 @@ class EditorActivity : BaseActivity() {
         }
         settings = AppSettings(this)
         applyEditorSettings()
+        // Item 112: returning from the notification Settings
+        // with the permission now on completes a pending reminder.
+        if (pendingReminder != null && notifGranted()) completePendingReminder()
         buildAccessoryBar()
     }
 
@@ -1012,8 +1028,20 @@ class EditorActivity : BaseActivity() {
         editor.wordWrap = settings.wordWrap &&
             editor.textLength() <= LARGE_FILE_CHARS &&
             activeMaxLine <= MAX_LINE_CHARS
+        // Items 106/107: if a keyboard-facing flag changed, the
+        // live keyboard session still holds the EditorInfo from
+        // when it opened — restart the input so the new
+        // capitalization/suggestion flags reach it immediately
+        // instead of after the next app start.
+        val imeFlagsChanged = editor.noSuggestions == settings.showSuggestions ||
+            editor.autoCapitalize != settings.autoCapitalize
         editor.noSuggestions = !settings.showSuggestions
         editor.autoCapitalize = settings.autoCapitalize
+        if (imeFlagsChanged && editor.isFocused) {
+            (getSystemService(Context.INPUT_METHOD_SERVICE)
+                as android.view.inputmethod.InputMethodManager)
+                .restartInput(editor)
+        }
         accessoryScroll.visibility = if (settings.accessoryView) View.VISIBLE else View.GONE
         applyEditorStyle()
         refreshLineNumbers()
@@ -1031,6 +1059,7 @@ class EditorActivity : BaseActivity() {
         if (style == null) {
             editor.textColor = palette.textPrimary
             editor.editorBackground = android.graphics.Color.TRANSPARENT
+            editor.loupeBackground = palette.surface
             editor.selectionColor = palette.accent and 0x66FFFFFF
             editor.gutterColor = palette.textSecondary
             editor.gutterBackground = palette.alt
@@ -1038,6 +1067,7 @@ class EditorActivity : BaseActivity() {
         } else {
             editor.textColor = style.foreground
             editor.editorBackground = style.background
+            editor.loupeBackground = style.background
             editor.selectionColor = style.selection
             editor.gutterColor = style.gutterText
             editor.gutterBackground = style.gutterBackground
@@ -1533,6 +1563,7 @@ class EditorActivity : BaseActivity() {
                 MenuRow(getString(R.string.menu_save)) { onSavePressed() },
                 MenuRow(getString(R.string.menu_save_as)) { promptSaveAs() },
                 MenuRow(getString(R.string.menu_bookmarked), isActiveBookmarked()) { toggleActiveBookmark() },
+                MenuRow(getString(R.string.menu_reminder)) { promptReminder() },
                 MenuRow(getString(R.string.menu_reload)) { reloadActive() },
                 MenuRow(getString(R.string.menu_close_tab)) { closeTab(active) },
                 MenuRow(getString(R.string.menu_share)) { shareText() },
@@ -1572,6 +1603,296 @@ class EditorActivity : BaseActivity() {
             if (now) getString(R.string.bookmarked_toast) else getString(R.string.bookmark_removed_toast),
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    /**
+     * Note reminder (item 110, KiA's order): one one-shot
+     * reminder per saved file — e.g. a shopping list that pings
+     * at the set hour. Drafts have no identity to attach a
+     * reminder to, so they are told to save first (same rule as
+     * bookmarks). The dialog is the house card with framework
+     * date/time pickers; an existing reminder can be changed or
+     * removed from the same card.
+     */
+    private fun promptReminder() {
+        val doc = docs.getOrNull(active) ?: return
+        val uri = doc.uri ?: run {
+            Toast.makeText(
+                this, getString(R.string.reminder_save_first), Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        stashActive()
+        val key = uri.toString()
+        val store = Reminders(this)
+        val existing = store.get(key)
+        val fmt = java.text.DateFormat.getDateTimeInstance(
+            java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT
+        )
+        // The dialog opens on the PHONE's own clock (item 114,
+        // KiA): Calendar/System already read the device time —
+        // no server, no fixed timezone anywhere in reminders.
+        // Default is the current minute +1 so an untouched
+        // dialog can be Set immediately without tripping the
+        // "time has passed" check.
+        val start = Calendar.getInstance().apply {
+            timeInMillis = existing?.triggerAt
+                ?: (System.currentTimeMillis() + 60_000L)
+        }
+        // Item 111, final form (KiA): no framework pickers, no
+        // scrolling — compact DIGITAL fields that fit any
+        // screen: day / month / year and hour : minute as typed
+        // digits in the house input style.
+        val dens = resources.displayMetrics.density
+        fun numField(initial: String, hint: String, sizeSp: Float, weight: Float) =
+            CardDialogs.inputField(
+                this, palette, hint, initial,
+                android.text.InputType.TYPE_CLASS_NUMBER
+            ).apply {
+                textSize = sizeSp
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, weight
+                ).apply { topMargin = 0 }
+            }
+        fun sep(label: String, sizeSp: Float) = TextView(this).apply {
+            text = label
+            textSize = sizeSp
+            setTextColor(palette.textSecondary)
+            gravity = Gravity.CENTER
+            setPadding((6 * dens).toInt(), 0, (6 * dens).toInt(), 0)
+        }
+        val dayField = numField(
+            String.format(Locale.US, "%02d", start.get(Calendar.DAY_OF_MONTH)),
+            "19", 17f, 1f
+        )
+        val monthField = numField(
+            String.format(Locale.US, "%02d", start.get(Calendar.MONTH) + 1),
+            "11", 17f, 1f
+        )
+        val yearField = numField(
+            String.format(Locale.US, "%04d", start.get(Calendar.YEAR)),
+            "2026", 17f, 1.5f
+        )
+        val hourField = numField(
+            String.format(Locale.US, "%02d", start.get(Calendar.HOUR_OF_DAY)),
+            "21", 26f, 1f
+        )
+        val minuteField = numField(
+            String.format(Locale.US, "%02d", start.get(Calendar.MINUTE)),
+            "05", 26f, 1f
+        )
+        val dateRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(dayField); addView(sep("/", 17f))
+            addView(monthField); addView(sep("/", 17f))
+            addView(yearField)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (14 * dens).toInt() }
+        }
+        val timeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(hourField); addView(sep(":", 26f)); addView(minuteField)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (12 * dens).toInt() }
+        }
+        val buttons = mutableListOf<CardDialogs.ButtonSpec>()
+        if (existing != null) {
+            buttons += CardDialogs.ButtonSpec(getString(R.string.reminder_remove)) { d ->
+                store.remove(key)
+                Toast.makeText(
+                    this, getString(R.string.reminder_removed_toast),
+                    Toast.LENGTH_SHORT
+                ).show()
+                d.dismiss()
+            }
+        }
+        buttons += CardDialogs.ButtonSpec(getString(R.string.cancel)) { it.dismiss() }
+        buttons += CardDialogs.ButtonSpec(getString(R.string.reminder_set), primary = true) { d ->
+            // Typed digits may arrive in Persian/Arabic digit
+            // shapes on some keyboards — normalise before parsing.
+            fun digits(field: EditText): Int? {
+                val sb = StringBuilder()
+                for (ch in field.text.toString().trim()) {
+                    sb.append(
+                        when (ch) {
+                            in '۰'..'۹' -> '0' + (ch - '۰')
+                            in '٠'..'٩' -> '0' + (ch - '٠')
+                            else -> ch
+                        }
+                    )
+                }
+                return sb.toString().toIntOrNull()
+            }
+            val day = digits(dayField)
+            val month = digits(monthField)
+            val year = digits(yearField)
+            val hour = digits(hourField)
+            val minute = digits(minuteField)
+            val whenCal = if (
+                day != null && month != null && year != null &&
+                hour != null && minute != null
+            ) {
+                Calendar.getInstance().apply {
+                    isLenient = false
+                    set(year, month - 1, day, hour, minute, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+            } else null
+            val whenMillis = try {
+                whenCal?.timeInMillis
+            } catch (e: Exception) {
+                null
+            }
+            if (whenCal == null || whenMillis == null) {
+                Toast.makeText(
+                    this, getString(R.string.reminder_invalid), Toast.LENGTH_SHORT
+                ).show()
+                return@ButtonSpec
+            }
+            if (whenMillis <= System.currentTimeMillis()) {
+                Toast.makeText(
+                    this, getString(R.string.reminder_past), Toast.LENGTH_SHORT
+                ).show()
+                return@ButtonSpec
+            }
+            val snippet = doc.text.lineSequence()
+                .firstOrNull { it.isNotBlank() }?.trim()?.take(90)
+                ?: doc.name
+            val reminder = Reminders.Reminder(key, doc.name, snippet, whenMillis)
+            // Item 112 (KiA): with notifications off the reminder
+            // is NOT stored — it could never fire. Explain and
+            // re-ask first; the set completes only on a grant.
+            if (!notifGranted()) {
+                d.dismiss()
+                showNotifGateCard(reminder)
+                return@ButtonSpec
+            }
+            store.put(reminder)
+            Toast.makeText(
+                this,
+                getString(R.string.reminder_set_toast_fmt, fmt.format(Date(whenMillis))),
+                Toast.LENGTH_SHORT
+            ).show()
+            d.dismiss()
+        }
+        CardDialogs.show(
+            this, palette,
+            title = getString(R.string.reminder_title),
+            message = existing?.let {
+                getString(R.string.reminder_current_fmt, fmt.format(Date(it.triggerAt)))
+            },
+            content = { body ->
+                body.addView(dateRow)
+                body.addView(timeRow)
+            },
+            buttons = buttons
+        )
+    }
+
+    /** Item 112: a reminder whose Set was tapped while
+     *  notifications are off; it completes only once the
+     *  permission lands (system dialog grant, or returning
+     *  from the notification Settings with it switched on). */
+    private var pendingReminder: Reminders.Reminder? = null
+
+    private fun notifGranted(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Item 112 (KiA): the user denied notifications at first
+     * run and now wants a reminder — say plainly that until
+     * notifications are on, a reminder cannot be set, and offer
+     * the request again right there. A permanently-denied
+     * permission cannot be re-asked (the system dialog would
+     * never appear), so that route opens the app's
+     * notification Settings instead.
+     */
+    private fun showNotifGateCard(reminder: Reminders.Reminder) {
+        pendingReminder = reminder
+        val permanentlyDenied = AppSettings(this).notifRequested &&
+            !shouldShowRequestPermissionRationale(
+                Manifest.permission.POST_NOTIFICATIONS
+            )
+        CardDialogs.show(
+            this, palette,
+            title = getString(R.string.reminder_title),
+            message = getString(R.string.reminder_notif_needed),
+            buttons = listOf(
+                CardDialogs.ButtonSpec(getString(R.string.cancel)) {
+                    pendingReminder = null
+                    it.dismiss()
+                },
+                CardDialogs.ButtonSpec(
+                    getString(
+                        if (permanentlyDenied) R.string.reminder_notif_settings
+                        else R.string.reminder_notif_enable
+                    ),
+                    primary = true
+                ) { d ->
+                    d.dismiss()
+                    if (permanentlyDenied) {
+                        startActivity(
+                            Intent(
+                                android.provider.Settings
+                                    .ACTION_APP_NOTIFICATION_SETTINGS
+                            ).putExtra(
+                                android.provider.Settings.EXTRA_APP_PACKAGE,
+                                packageName
+                            )
+                        )
+                    } else {
+                        AppSettings(this).notifRequested = true
+                        requestPermissions(
+                            arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7310
+                        )
+                    }
+                }
+            )
+        )
+    }
+
+    private fun completePendingReminder() {
+        val reminder = pendingReminder ?: return
+        pendingReminder = null
+        Reminders(this).put(reminder)
+        val fmt = java.text.DateFormat.getDateTimeInstance(
+            java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT
+        )
+        Toast.makeText(
+            this,
+            getString(
+                R.string.reminder_set_toast_fmt,
+                fmt.format(Date(reminder.triggerAt))
+            ),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != 7310) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            completePendingReminder()
+        } else if (pendingReminder != null) {
+            pendingReminder = null
+            Toast.makeText(
+                this, getString(R.string.reminder_not_set_toast),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     /** Edit menu: everything that acts on the text. */
@@ -2062,6 +2383,7 @@ class EditorActivity : BaseActivity() {
 
     private fun showFindBar() {
         findBar.visibility = View.VISIBLE
+        findBarDivider.visibility = View.VISIBLE
         if (findField.text.toString() != lastQuery) {
             findField.setText(lastQuery)
         }
@@ -2075,6 +2397,7 @@ class EditorActivity : BaseActivity() {
 
     private fun hideFindBar() {
         findBar.visibility = View.GONE
+        findBarDivider.visibility = View.GONE
         clearFindHighlights()
         editor.requestFocus()
     }

@@ -155,4 +155,24 @@
     <string name="reload_msg">ستفقد التغييرات غير المحفوظة في هذا التبويب.</string>
     <string name="replace_btn">استبدال</string>
     <string name="language">اللغة</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">تذكير</string>
+    <string name="reminder_title">تذكير الملاحظة</string>
+    <string name="reminder_set">تعيين</string>
+    <string name="reminder_remove">إزالة التذكير</string>
+    <string name="reminder_save_first">احفظ الملف أولاً لتعيين تذكير</string>
+    <string name="reminder_past">لقد مرّ هذا الوقت</string>
+    <string name="reminder_set_toast_fmt">تم تعيين التذكير لـ %1$s</string>
+    <string name="reminder_removed_toast">تمت إزالة التذكير</string>
+    <string name="reminder_current_fmt">التذكير الحالي: %1$s</string>
+    <string name="notif_channel_reminders">تذكيرات الملاحظات</string>
+    <string name="notif_ask_body">هل تريد أن تذكّرك ملاحظة في الوقت المناسب — مثل قائمة التسوق قبل الخروج؟ اسمح بالإشعارات لتتمكن من تعيين تذكير على أي ملاحظة.</string>
+    <string name="notif_ask_allow">سماح</string>
+    <string name="notif_ask_later">ليس الآن</string>
+    <string name="reminder_invalid">هذا التاريخ أو الوقت غير صالح</string>
+    <string name="reminder_notif_needed">الإشعارات متوقفة، لذا لا يمكن تعيين تذكير بعد. فعّلها وستنبّهك هذه الملاحظة في الوقت تماماً.</string>
+    <string name="reminder_notif_enable">تشغيل الإشعارات</string>
+    <string name="reminder_notif_settings">فتح الإعدادات</string>
+    <string name="reminder_not_set_toast">لم يتم تعيين التذكير — الإشعارات متوقفة</string>
 </resources>

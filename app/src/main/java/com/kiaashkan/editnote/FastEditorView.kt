@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
@@ -16,6 +18,7 @@ import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextDirectionHeuristics
 import android.text.TextPaint
+import android.text.TextUtils
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.UnderlineSpan
@@ -31,6 +34,8 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedText
+import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.OverScroller
@@ -324,7 +329,25 @@ class FastEditorView @JvmOverloads constructor(
         if (actionMode != null && wasEmpty != (selStart == selEnd)) {
             actionMode?.invalidate()
         }
+        // Item 102: while the floating selection menu is up, keep
+        // its anchor glued to the selection's current rect.
+        if (actionMode != null && wasEmpty == (selStart == selEnd)) {
+            actionMode?.invalidateContentRect()
+        }
         invalidate()
+        notifyImeSelection()
+    }
+
+    /** Tell the keyboard where the cursor and the composing
+     *  region are (items 106/107). Without this the IME keeps a
+     *  stale text model — it never learns the cursor moved, so
+     *  sentence capitalization never engages and word
+     *  suggestions lose their context. */
+    private fun notifyImeSelection() {
+        if (!isFocused) return
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE)
+            as? InputMethodManager ?: return
+        imm.updateSelection(this, selStart, selEnd, composingStart, composingEnd)
     }
 
     // ------------------------------------------------------------------
@@ -352,6 +375,13 @@ class FastEditorView @JvmOverloads constructor(
 
     var textColor: Int = 0xFF111111.toInt()
     var editorBackground: Int = 0xFFFFFFFF.toInt()
+
+    /** Opaque background for the magnifier loupe (item 108).
+     *  editorBackground is TRANSPARENT under the "Default" style
+     *  (the window paints the background), which left the loupe
+     *  see-through; the activity sets this to the colour that is
+     *  actually behind the text. */
+    var loupeBackground: Int = 0xFFFFFFFF.toInt()
     var gutterColor: Int = 0xFF888888.toInt()
     var gutterBackground: Int = 0xFFF0F0F0.toInt()
     var accentColor: Int = 0xFFF46658.toInt()
@@ -428,6 +458,18 @@ class FastEditorView @JvmOverloads constructor(
         val base = fm.descent - fm.ascent
         return (base * lineSpacingMult + lineSpacingAddPx).toInt().coerceAtLeast(1)
     }
+
+    /** A document line's full block height (item 105): the
+     *  layout's own height plus the user's line-spacing extra.
+     *  The engine applies the extra itself — StaticLayout only
+     *  puts it BETWEEN the rows of a single layout, and with one
+     *  layout per document line and wrap off there is no
+     *  "between", so the setting silently did nothing. Every
+     *  height consumer (lineHeights[], heightOf, the draw loop)
+     *  goes through this, keeping scroll math and drawing in
+     *  agreement. */
+    private fun blockHeight(layout: StaticLayout): Int =
+        layout.height + lineSpacingAddPx.toInt()
 
     private var lineHeightEstimate: Int = 1
 
@@ -747,18 +789,22 @@ class FastEditorView @JvmOverloads constructor(
             // and joins RTL runs correctly inside the line; only
             // the paragraph's anchor direction is fixed.
             .setTextDirection(TextDirectionHeuristics.LTR)
-            .setLineSpacing(lineSpacingAddPx, lineSpacingMult)
+            // No spacing inside the layout (item 105): the engine
+            // adds the line-spacing extra to the line's block
+            // height itself — see blockHeight().
+            .setLineSpacing(0f, 1f)
             .setIncludePad(false)
             .build()
         layoutCache[line] = layout
+        val blockH = blockHeight(layout)
         val prevH = lineHeights[line]
         if (prevH < 0) {
-            measuredSum += layout.height
+            measuredSum += blockH
             measuredCount++
-        } else if (prevH != layout.height) {
-            measuredSum += (layout.height - prevH)
+        } else if (prevH != blockH) {
+            measuredSum += (blockH - prevH)
         }
-        lineHeights[line] = layout.height
+        lineHeights[line] = blockH
         return layout
     }
 
@@ -907,7 +953,7 @@ class FastEditorView @JvmOverloads constructor(
     private var anchorY = 0
 
     private fun heightOf(line: Int): Int =
-        if (lineHeights[line] >= 0) lineHeights[line] else layoutForLine(line).height
+        if (lineHeights[line] >= 0) lineHeights[line] else blockHeight(layoutForLine(line))
 
     /** First (partially) visible logical line + the px of its top. */
     private fun firstVisibleLine(): Pair<Int, Int> {
@@ -1042,20 +1088,156 @@ class FastEditorView @JvmOverloads constructor(
                         fillPaint
                     )
                 }
-                if (selStart != selEnd) {
-                    if (selectionStart in start..end) {
-                        drawHandleAt(canvas, layout, selectionStart - start, textLeft, y, above = true)
-                    }
-                    if (selectionEnd in start..end) {
-                        drawHandleAt(canvas, layout, selectionEnd - start, textLeft, y, above = false)
-                    }
-                }
             }
             canvas.restore()
-            y += layout.height
+            // Selection handles (item 102): record every line that
+            // holds a selection edge; they are painted after the
+            // loop, above all text. The old code painted them only
+            // inside the cursor block above — the start handle never
+            // appeared on multi-line selections, and both vanished
+            // whenever the view lost focus while the highlight (and
+            // the selection itself) stayed.
+            if (selStart != selEnd) {
+                if (selectionStart in start..end) {
+                    startHandleDraw = handleGeometry(
+                        layout, selectionStart - start, textLeft, y
+                    )
+                }
+                if (selectionEnd in start..end) {
+                    endHandleDraw = handleGeometry(
+                        layout, selectionEnd - start, textLeft, y
+                    )
+                }
+            }
+            y += blockHeight(layout)
             line++
         }
+        // Selection handles are painted last, over the text
+        // (item 102): each hangs below its line on a short stem,
+        // native-style — big enough to see and to grab.
+        if (startHandleDraw != null || endHandleDraw != null) {
+            canvas.save()
+            canvas.clipRect(gutterW, 0, width, height)
+            startHandleDraw?.let { drawHandle(canvas, it[0], it[1]) }
+            endHandleDraw?.let { drawHandle(canvas, it[0], it[1]) }
+            canvas.restore()
+            startHandleDraw = null
+            endHandleDraw = null
+        }
+        // The magnifier loupe rides above everything (item 104).
+        if (magnifierOffset >= 0) drawMagnifier(canvas)
         prefetchAhead(firstLine, line)
+    }
+
+    /** The magnifier loupe (item 104, KiA): while a selection
+     *  handle is dragged, the finger hides the exact edge — so a
+     *  bubble floats above the line showing the text around the
+     *  edge at 2×, like the professional editors. It re-draws the
+     *  nearby lines through a scale transform, so syntax colours,
+     *  line numbers and the LIVE selection inside it are exactly
+     *  what is on screen; an accent frame and a centre marker pin
+     *  the precise edge. */
+    private fun drawMagnifier(canvas: Canvas) {
+        val off = magnifierOffset.coerceIn(0, buffer.length)
+        val line = lineOfOffset(off)
+        val layout = layoutForLine(line)
+        val local = off - lineStart(line)
+        val row = layout.getLineForOffset(local)
+        val gutterW = gutterWidthPx()
+        val textLeft = gutterW + paddingLeft - scrollXPos
+        val edgeX = textLeft + layout.getPrimaryHorizontal(local)
+        val lineY = lineTopEstimate(line) - scrollYPos + paddingTop
+        val rowTop = lineY + layout.getLineTop(row)
+        val rowBottom = lineY + layout.getLineBottom(row)
+        val rowMid = (rowTop + rowBottom) / 2f
+
+        val zoom = 2f
+        val loupeW = 132 * density
+        val loupeH = 68 * density
+        val radius = 14 * density
+        val margin = 8 * density
+        // Centred on the edge, clamped inside the view; above the
+        // line, or below the handle when the line is at the top.
+        val left = (edgeX - loupeW / 2)
+            .coerceIn(margin, (width - margin - loupeW).coerceAtLeast(margin))
+        var top = rowTop - 16 * density - loupeH
+        if (top < margin) top = rowBottom + 30 * density
+        top = top.coerceIn(margin, (height - margin - loupeH).coerceAtLeast(margin))
+        val rect = RectF(left, top, left + loupeW, top + loupeH)
+
+        // The region of the document the loupe shows, in view
+        // coordinates (for the gutter strip and the text clip).
+        val regionLeft = edgeX - loupeW / 2 / zoom
+        val regionRight = edgeX + loupeW / 2 / zoom
+        val regionTop = rowMid - loupeH / 2 / zoom
+        val regionBottom = rowMid + loupeH / 2 / zoom
+
+        val path = Path()
+        path.addRoundRect(rect, radius, radius, Path.Direction.CW)
+        canvas.save()
+        canvas.clipPath(path)
+        // Item 108: a solid, theme-matched background — never
+        // editorBackground, which is transparent under the
+        // "Default" style and left the loupe like glass.
+        fillPaint.color = loupeBackground or -0x1000000
+        canvas.drawRect(rect, fillPaint)
+        // Map the edge point to the loupe's centre, zoomed.
+        canvas.translate(left + loupeW / 2, top + loupeH / 2)
+        canvas.scale(zoom, zoom)
+        canvas.translate(-edgeX, -rowMid)
+        if (showLineNumbers) {
+            fillPaint.color = gutterBackground
+            canvas.drawRect(regionLeft, regionTop, gutterW.toFloat(), regionBottom, fillPaint)
+        }
+        val selA = selectionStart
+        val selB = selectionEnd
+        var l = (line - 2).coerceAtLeast(0)
+        val lastL = (line + 2).coerceAtMost(lineCount - 1)
+        canvas.save()
+        canvas.clipRect(gutterW, regionTop.toInt(), regionRight.toInt(), regionBottom.toInt())
+        while (l <= lastL) {
+            val lay = layoutForLine(l)
+            val s = lineStart(l)
+            val e = lineEnd(l)
+            val ly = lineTopEstimate(l) - scrollYPos + paddingTop
+            if (selB > selA && selA < e + 1 && selB > s) {
+                drawSelection(canvas, lay, s, selA, selB, textLeft, ly)
+            }
+            canvas.save()
+            canvas.translate(textLeft.toFloat(), ly.toFloat())
+            textPaint.color = textColor
+            complexPaint.color = textColor
+            lay.draw(canvas)
+            canvas.restore()
+            l++
+        }
+        canvas.restore()
+        if (showLineNumbers) {
+            gutterPaint.color = gutterColor
+            l = (line - 2).coerceAtLeast(0)
+            while (l <= lastL) {
+                val lay = layoutForLine(l)
+                val ly = lineTopEstimate(l) - scrollYPos + paddingTop
+                canvas.drawText(
+                    (l + 1).toString(),
+                    (gutterW - 10 * density),
+                    (ly + lay.getLineBaseline(0)).toFloat(),
+                    gutterPaint
+                )
+                l++
+            }
+        }
+        canvas.restore()
+        // Accent frame + the centre marker at the exact edge.
+        magnifierPaint.style = Paint.Style.STROKE
+        magnifierPaint.strokeWidth = 1.2f * density
+        magnifierPaint.color = accentColor
+        canvas.drawRoundRect(rect, radius, radius, magnifierPaint)
+        canvas.drawLine(
+            left + loupeW / 2, top + 5 * density,
+            left + loupeW / 2, top + loupeH - 5 * density,
+            magnifierPaint
+        )
     }
 
     // Prefetch: while the drawn frame is on screen, lay out the next
@@ -1088,23 +1270,30 @@ class FastEditorView @JvmOverloads constructor(
         }
     }
 
-    private fun drawHandleAt(
-        canvas: Canvas,
+    /** (x, rowBottom) of the handle for the selection edge at
+     *  [local] within [layout]; recorded during the draw pass and
+     *  painted after the loop (item 102). */
+    private fun handleGeometry(
         layout: StaticLayout,
         local: Int,
         textLeft: Int,
-        lineTop: Int,
-        above: Boolean
-    ) {
+        lineTop: Int
+    ): FloatArray {
         val row = layout.getLineForOffset(local)
         val x = textLeft + layout.getPrimaryHorizontal(local)
-        val cy = if (above) {
-            lineTop + layout.getLineTop(row) - 6 * density
-        } else {
-            lineTop + layout.getLineBottom(row) + 6 * density
-        }
+        val bottom = (lineTop + layout.getLineBottom(row)).toFloat()
+        return floatArrayOf(x, bottom)
+    }
+
+    /** Native-style selection handle (item 102): a short stem from
+     *  the text edge down to a round grip below the line. The grip
+     *  centre — (x, rowBottom + 10dp) — is exactly where handleAt()
+     *  listens, so what you see is what you grab. */
+    private fun drawHandle(canvas: Canvas, x: Float, rowBottom: Float) {
+        val r = 10 * density
         fillPaint.color = accentColor
-        canvas.drawCircle(x, cy, 9 * density, fillPaint)
+        canvas.drawRect(x - density, rowBottom, x + density, rowBottom + r, fillPaint)
+        canvas.drawCircle(x, rowBottom + r, r, fillPaint)
     }
 
     private fun drawSelection(
@@ -1180,6 +1369,13 @@ class FastEditorView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        if (h < oldh) {
+            // Item 109 (KiA): the keyboard opening shrinks the
+            // editor (adjustResize) — without this the caret line
+            // stays below the fold, hidden behind the keyboard.
+            // Scroll it into the new, smaller viewport.
+            ensureCursorVisible()
+        }
         if (w != oldw) {
             // Wrap widths changed (rotation): every cached layout and
             // measured height is stale.
@@ -1255,6 +1451,17 @@ class FastEditorView @JvmOverloads constructor(
     // Touch / gestures
     // ------------------------------------------------------------------
     private var draggingHandle: Int = 0 // 0 none, 1 start, 2 end
+
+    // Selection-handle geometry recorded by the draw pass and
+    // painted after the line loop (item 102): [x, rowBottom].
+    private var startHandleDraw: FloatArray? = null
+    private var endHandleDraw: FloatArray? = null
+
+    // Magnifier loupe (item 104): while a selection handle is
+    // being dragged, the offset of the edge under the finger;
+    // -1 hides the loupe.
+    private var magnifierOffset: Int = -1
+    private val magnifierPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var actionMode: ActionMode? = null
     // True when the current touch gesture began by stopping a fling
     // (item 89): that tap only stops the scroll — it must not pop the
@@ -1368,7 +1575,16 @@ class FastEditorView @JvmOverloads constructor(
                 stopFling()
                 // Handle drags take precedence near selection ends.
                 draggingHandle = handleAt(event.x, event.y)
-                if (draggingHandle != 0) return true
+                if (draggingHandle != 0) {
+                    // Item 104: grabbing a handle raises the
+                    // magnifier loupe and dismisses the floating
+                    // menu for the drag's duration (it returns on
+                    // release, as everywhere else in Android).
+                    magnifierOffset = if (draggingHandle == 1) selStart else selEnd
+                    actionMode?.finish()
+                    invalidate()
+                    return true
+                }
                 if (downStoppedFling) {
                     // Grab the moving content (item 91): this view
                     // runs the gesture itself from here — the finger
@@ -1418,6 +1634,9 @@ class FastEditorView @JvmOverloads constructor(
                     }
                     scrollToOffset(off)
                     onSelectionChanged?.invoke()
+                    // Item 104: the loupe tracks the dragged edge
+                    // (after any start/end swap above).
+                    magnifierOffset = if (draggingHandle == 1) selStart else selEnd
                     invalidate()
                     return true
                 }
@@ -1454,7 +1673,9 @@ class FastEditorView @JvmOverloads constructor(
                 }
                 if (draggingHandle != 0) {
                     draggingHandle = 0
+                    magnifierOffset = -1
                     if (selStart != selEnd) startTextActionMode()
+                    invalidate()
                     return true
                 }
             }
@@ -1468,7 +1689,7 @@ class FastEditorView @JvmOverloads constructor(
 
     private fun handleAt(x: Float, y: Float): Int {
         if (selStart == selEnd) return 0
-        val r = 28 * density
+        val r = 30 * density
         val gutterW = gutterWidthPx()
         for ((offset, which) in listOf(selectionStart to 1, selectionEnd to 2)) {
             val line = lineOfOffset(offset)
@@ -1477,9 +1698,10 @@ class FastEditorView @JvmOverloads constructor(
             val row = layout.getLineForOffset(offset - lineStart(line))
             val hx = gutterW + paddingLeft - scrollXPos +
                 layout.getPrimaryHorizontal(offset - lineStart(line))
-            val hy = top + layout.getLineTop(row) + 
-                (layout.getLineBottom(row) - layout.getLineTop(row)) / 2
-            if (abs(x - hx) <= r && abs(y - hy) <= r + 10 * density) return which
+            // The same centre the painter uses (item 102): the
+            // grip circle hangs below the edge's row.
+            val hy = top + layout.getLineBottom(row) + 10 * density
+            if (abs(x - hx) <= r && abs(y - hy) <= r) return which
         }
         return 0
     }
@@ -1515,29 +1737,65 @@ class FastEditorView @JvmOverloads constructor(
     }
 
     /** Route for everything the user TYPES (IME commits, key events). */
+    /** Item 106 (round 2): is [pos] the start of a sentence?
+     *  The top of the text, just after a newline, or just after
+     *  sentence-ending punctuation (. ! ? ؟ …) with any spaces
+     *  or closing quotes/brackets in between. */
+    private fun isSentenceStart(pos: Int): Boolean {
+        var i = pos - 1
+        while (i >= 0) {
+            val c = buffer[i]
+            if (c == ' ' || c == '\t' || c == '"' || c == '\'' ||
+                c == ')' || c == ']' || c == '”' || c == '’'
+            ) {
+                i--
+                continue
+            }
+            if (c == '\n') return true
+            return c == '.' || c == '!' || c == '?' || c == '؟' || c == '…'
+        }
+        return true
+    }
+
+    /** Uppercase [text]'s first letter when auto-capitalize is
+     *  on and the insertion point is a sentence start. The editor
+     *  does this itself (item 106 round 2): KiA's keyboard still
+     *  never capitalized with the full IME contract in place —
+     *  keyboards vary too much to rely on. Only a lowercase first
+     *  letter is touched, so a keyboard that DOES capitalize is
+     *  never fought. */
+    private fun capitalizedAt(text: String, pos: Int): String {
+        if (!autoCapitalize || text.isEmpty()) return text
+        val first = text[0]
+        if (!first.isLowerCase()) return text
+        if (!isSentenceStart(pos)) return text
+        return first.uppercaseChar() + text.substring(1)
+    }
+
     fun typeText(text: String) {
         if (readOnly) return
-        if (!codeBehaviors || text.isEmpty()) {
-            replaceRange(selectionStart, selectionEnd, text)
+        val ins = capitalizedAt(text, selectionStart)
+        if (!codeBehaviors || ins.isEmpty()) {
+            replaceRange(selectionStart, selectionEnd, ins)
             return
         }
         val a = selectionStart
         val b = selectionEnd
         if (a != b) {
             // Typing an opener over a selection wraps it in the pair.
-            if (text.length == 1 && closers.containsKey(text[0])) {
-                val open = text[0]
+            if (ins.length == 1 && closers.containsKey(ins[0])) {
+                val open = ins[0]
                 val close = closers.getValue(open)
                 val inner = buffer.substring(a, b)
                 replaceRange(a, b, "$open$inner$close")
                 setSelection(a + 1, a + 1 + inner.length)
                 return
             }
-            replaceRange(a, b, text)
+            replaceRange(a, b, ins)
             return
         }
-        if (text.length == 1) {
-            val c = text[0]
+        if (ins.length == 1) {
+            val c = ins[0]
             // Type-over: closing over an identical existing closer.
             if (c in closerChars && charAt(a) == c) {
                 setSelection(a + 1)
@@ -1551,7 +1809,7 @@ class FastEditorView @JvmOverloads constructor(
                 return
             }
         }
-        replaceRange(a, b, text)
+        replaceRange(a, b, ins)
     }
 
     /**
@@ -1664,9 +1922,20 @@ class FastEditorView @JvmOverloads constructor(
 
     private fun startTextActionMode() {
         actionMode?.finish()
-        actionMode = startActionMode(object : ActionMode.Callback {
+        // Item 102 (KiA): a FLOATING menu anchored to the selection
+        // itself — the plain startActionMode() gave the primary
+        // mode, a bar pinned to the top of the screen, which KiA
+        // explicitly does not want. Callback2.onGetContentRect is
+        // what tells the framework where the selected text is.
+        actionMode = startActionMode(object : ActionMode.Callback2() {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
                 return true // items are built in onPrepareActionMode
+            }
+
+            override fun onGetContentRect(
+                mode: ActionMode, view: View, outRect: Rect
+            ) {
+                outRect.set(selectionContentRect())
             }
 
             override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
@@ -1694,7 +1963,42 @@ class FastEditorView @JvmOverloads constructor(
             override fun onDestroyActionMode(mode: ActionMode) {
                 if (actionMode === mode) actionMode = null
             }
-        })
+        }, ActionMode.TYPE_FLOATING)
+    }
+
+    /** The selected text's own rect in view coordinates — the
+     *  anchor for the floating selection menu (item 102). For a
+     *  multi-line selection the rect spans the full text width;
+     *  the framework centres the menu over it and flips it below
+     *  the text when there is no room above. */
+    private fun selectionContentRect(): Rect {
+        val a = selectionStart
+        val b = selectionEnd
+        val lineA = lineOfOffset(a)
+        val lineB = lineOfOffset(b)
+        val layoutA = layoutForLine(lineA)
+        val layoutB = layoutForLine(lineB)
+        val localA = a - lineStart(lineA)
+        val localB = b - lineStart(lineB)
+        val rowA = layoutA.getLineForOffset(localA)
+        val rowB = layoutB.getLineForOffset(localB)
+        val top = lineTopEstimate(lineA) - scrollYPos + paddingTop +
+            layoutA.getLineTop(rowA)
+        val bottom = lineTopEstimate(lineB) - scrollYPos + paddingTop +
+            layoutB.getLineBottom(rowB)
+        val textLeft = gutterWidthPx() + paddingLeft - scrollXPos
+        val left: Int
+        val right: Int
+        if (lineA == lineB) {
+            val xa = textLeft + layoutA.getPrimaryHorizontal(localA).toInt()
+            val xb = textLeft + layoutA.getPrimaryHorizontal(localB).toInt()
+            left = min(xa, xb)
+            right = max(xa, xb)
+        } else {
+            left = textLeft
+            right = width - paddingRight
+        }
+        return Rect(left, top, max(right, left + 1), max(bottom, top + 1))
     }
 
     // ------------------------------------------------------------------
@@ -1720,11 +2024,20 @@ class FastEditorView @JvmOverloads constructor(
         if (noSuggestions) {
             outAttrs.inputType = outAttrs.inputType or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        } else {
+            // Items 106/107: with suggestions on, also grant
+            // auto-correct — the pair is what makes a keyboard's
+            // suggestion engine fully engage, like a normal
+            // text field.
+            outAttrs.inputType = outAttrs.inputType or
+                InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
         }
         if (autoCapitalize) {
             outAttrs.inputType = outAttrs.inputType or
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
+        outAttrs.initialSelStart = selStart
+        outAttrs.initialSelEnd = selEnd
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or
             EditorInfo.IME_ACTION_NONE
         return object : BaseInputConnection(this, true) {
@@ -1732,18 +2045,22 @@ class FastEditorView @JvmOverloads constructor(
                 if (readOnly) return true
                 val ins = text.toString()
                 if (composingStart >= 0) {
-                    replaceRange(composingStart, composingEnd, ins)
+                    replaceRange(
+                        composingStart, composingEnd,
+                        capitalizedAt(ins, composingStart)
+                    )
                 } else {
                     typeText(ins)
                 }
+                notifyImeSelection()
                 return true
             }
 
             override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
                 if (readOnly) return true
-                val ins = normalizeArabicForms(text.toString())
                 val a = if (composingStart >= 0) composingStart else selectionStart
                 val b = if (composingStart >= 0) composingEnd else selectionEnd
+                val ins = capitalizedAt(normalizeArabicForms(text.toString()), a)
                 // Apply the edit, then re-mark the composing range.
                 val start = a
                 buffer.replace(a, b, ins)
@@ -1755,6 +2072,7 @@ class FastEditorView @JvmOverloads constructor(
                 layoutCache.clear()
                 onTextChanged?.invoke(a, b - a, ins)
                 invalidate()
+                notifyImeSelection()
                 return true
             }
 
@@ -1763,6 +2081,7 @@ class FastEditorView @JvmOverloads constructor(
                 composingEnd = -1
                 layoutCache.clear()
                 invalidate()
+                notifyImeSelection()
                 return true
             }
 
@@ -1799,6 +2118,48 @@ class FastEditorView @JvmOverloads constructor(
             override fun getSelectedText(flags: Int): CharSequence {
                 if (selStart == selEnd) return ""
                 return buffer.substring(selectionStart, selectionEnd)
+            }
+
+            override fun getCursorCapsMode(reqModes: Int): Int {
+                // Item 106: BaseInputConnection's dummy returns 0,
+                // so the keyboard NEVER capitalizes — the
+                // CAP_SENTENCES flag only declares the field
+                // supports it; this call is where the keyboard
+                // asks "capitalize HERE?". Answer from the real
+                // text before the cursor, like TextView does.
+                if (!autoCapitalize) return 0
+                val cursor = selStart
+                val from = (cursor - 2048).coerceAtLeast(0)
+                val before = buffer.substring(from, cursor)
+                return TextUtils.getCapsMode(before, before.length, reqModes)
+            }
+
+            override fun getExtractedText(
+                request: ExtractedTextRequest, flags: Int
+            ): ExtractedText {
+                // Item 107: BaseInputConnection's dummy returns
+                // null, leaving the keyboard's text model empty —
+                // suggestions degrade to context-free guessing.
+                // Serve a window around the cursor for huge
+                // documents, the whole text otherwise.
+                val len = buffer.length
+                val from: Int
+                val to: Int
+                if (len <= 120_000) {
+                    from = 0
+                    to = len
+                } else {
+                    from = (selEnd - 60_000).coerceAtLeast(0)
+                    to = (from + 120_000).coerceAtMost(len)
+                }
+                val out = ExtractedText()
+                out.text = buffer.substring(from, to)
+                out.startOffset = from
+                out.partialStartOffset = -1
+                out.partialEndOffset = -1
+                out.selectionStart = (selStart - from).coerceIn(0, to - from)
+                out.selectionEnd = (selEnd - from).coerceIn(0, to - from)
+                return out
             }
 
             override fun setSelection(start: Int, end: Int): Boolean {

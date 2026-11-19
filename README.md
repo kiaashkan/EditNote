@@ -27,8 +27,11 @@ important hides inside the app.
 **Editor**
 - Multiple open files with tabs (`*` marks unsaved changes), line numbers
 - Icon mini toolbar: Open, Undo, Redo, Find, Save, Close tab — and Find opens an inline find bar with a match counter and previous/next buttons
+- Note reminders: put a reminder on any saved file (File menu) and get a
+  notification at the chosen day and time — shopping lists included; a
+  small bell marks files with an active reminder
 - Three tidy header menus: **File** (New, Open, Save, Save As, Bookmarked,
-  Reload, Close tab, Share, Print, Settings), **Edit** (Select All, Paste,
+  Reminder, Reload, Close tab, Share, Print, Settings), **Edit** (Select All, Paste,
   Insert date & time, Increase/Decrease indent, Go to Line,
   Find & Replace, Statistics) and **Options** (Visual style, Encoding,
   Syntax, Word Wrap, Read Only), drawn as modern card popups
@@ -58,7 +61,7 @@ important hides inside the app.
 **Settings**
 - A modern grouped-cards layout with switches; an About card with an
   **Update EditNote** row that opens the latest GitHub release (the
-  app still requests zero permissions, so updates happen in your
+  app has no internet permission, so updates happen in your
   browser), and a **Report a bug** row that opens your mail app
   addressed to the maker
 - Theme (System / Light / Dark) and accent colors (Orange by default, plus
@@ -74,7 +77,8 @@ important hides inside the app.
 
 ## Privacy
 
-- Zero permissions requested — not even INTERNET
+- No INTERNET permission at all; the only permissions requested are
+  the ones note reminders need (notifications, exact alarms, boot)
 - Fully offline; no analytics, no ads, no accounts
 - Files are read and written only where you open or save them
 
@@ -94,8 +98,8 @@ When you install the APK, Google Play Protect may say
 **"App scan recommended — Play Protect hasn't seen this app before."**
 That prompt appears for *every* app installed from outside Google Play;
 it is not an error and it does not mean the app is unsafe. Choose
-**Install without scanning** (or let it scan once — EditNote requests zero
-permissions and works fully offline). After a clean scan, the prompt
+**Install without scanning** (or let it scan once — EditNote has no
+internet permission and works fully offline). After a clean scan, the prompt
 normally stops appearing for EditNote.
 
 ## Building

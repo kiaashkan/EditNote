@@ -1,9 +1,12 @@
 package com.kiaashkan.editnote
 
+import android.Manifest
 import android.app.Activity
 import android.app.Dialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -19,12 +22,14 @@ import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import com.kiaashkan.editnote.data.AppSettings
 import com.kiaashkan.editnote.data.RecentFiles
+import com.kiaashkan.editnote.data.Reminders
 import java.text.DateFormat
 import java.util.Date
 
@@ -146,6 +151,40 @@ class MainActivity : BaseActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         refresh()
+        maybeAskNotifications()
+    }
+
+    /**
+     * Item 110 (KiA's order): on the FIRST launch after install,
+     * offer the notification permission once — note reminders
+     * need it. Whatever the user picks, the card never comes
+     * back; setting a reminder asks again in context.
+     */
+    private fun maybeAskNotifications() {
+        val settings = AppSettings(this)
+        if (settings.notifAskDone) return
+        settings.notifAskDone = true
+        Reminders.ensureChannel(this)
+        CardDialogs.show(
+            this, palette,
+            title = getString(R.string.notif_channel_reminders),
+            message = getString(R.string.notif_ask_body),
+            buttons = listOf(
+                CardDialogs.ButtonSpec(getString(R.string.notif_ask_later)) { it.dismiss() },
+                CardDialogs.ButtonSpec(getString(R.string.notif_ask_allow), primary = true) { d ->
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        AppSettings(this@MainActivity).notifRequested = true
+                        requestPermissions(
+                            arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7301
+                        )
+                    }
+                    d.dismiss()
+                }
+            )
+        )
     }
 
     override fun onResume() {
@@ -611,6 +650,11 @@ class MainActivity : BaseActivity() {
             }
             val preview = view.findViewById<TextView>(R.id.notePreview)
             val meta = view.findViewById<TextView>(R.id.noteMeta)
+            // Item 110: a bell marks files with an active reminder.
+            val bell = view.findViewById<ImageView>(R.id.noteReminder)
+            val hasReminder = Reminders(this@MainActivity).get(entry.uri) != null
+            bell.visibility = if (hasReminder) View.VISIBLE else View.GONE
+            if (hasReminder) bell.setColorFilter(palette.accent)
             // A leading LEFT-TO-RIGHT MARK pins the name's paragraph
             // direction at the string level (item 94, final form):
             // KiA's phone renders a Persian-first name as an RTL

@@ -155,4 +155,24 @@
     <string name="reload_msg">Несохранённые изменения в этой вкладке будут потеряны.</string>
     <string name="replace_btn">Заменить</string>
     <string name="language">Язык</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">Напоминание</string>
+    <string name="reminder_title">Напоминание для заметки</string>
+    <string name="reminder_set">Установить</string>
+    <string name="reminder_remove">Убрать напоминание</string>
+    <string name="reminder_save_first">Сначала сохраните файл, чтобы поставить напоминание</string>
+    <string name="reminder_past">Это время уже прошло</string>
+    <string name="reminder_set_toast_fmt">Напоминание установлено на %1$s</string>
+    <string name="reminder_removed_toast">Напоминание убрано</string>
+    <string name="reminder_current_fmt">Текущее напоминание: %1$s</string>
+    <string name="notif_channel_reminders">Напоминания заметок</string>
+    <string name="notif_ask_body">Хотите, чтобы заметка напоминала вовремя — например, список покупок перед выходом? Разрешите уведомления, и вы сможете ставить напоминание на любую заметку.</string>
+    <string name="notif_ask_allow">Разрешить</string>
+    <string name="notif_ask_later">Не сейчас</string>
+    <string name="reminder_invalid">Недопустимая дата или время</string>
+    <string name="reminder_notif_needed">Уведомления выключены, поэтому напоминание пока нельзя поставить. Включите их — и заметка напомнит точно в срок.</string>
+    <string name="reminder_notif_enable">Включить уведомления</string>
+    <string name="reminder_notif_settings">Открыть настройки</string>
+    <string name="reminder_not_set_toast">Напоминание не установлено — уведомления выключены</string>
 </resources>

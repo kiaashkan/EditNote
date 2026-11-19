@@ -155,4 +155,24 @@
     <string name="reload_msg">Ungespeicherte Änderungen in diesem Tab gehen verloren.</string>
     <string name="replace_btn">Ersetzen</string>
     <string name="language">Sprache</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">Erinnerung</string>
+    <string name="reminder_title">Notiz-Erinnerung</string>
+    <string name="reminder_set">Einstellen</string>
+    <string name="reminder_remove">Erinnerung entfernen</string>
+    <string name="reminder_save_first">Speichern Sie die Datei zuerst, um eine Erinnerung einzustellen</string>
+    <string name="reminder_past">Diese Zeit ist bereits vorbei</string>
+    <string name="reminder_set_toast_fmt">Erinnerung für %1$s eingestellt</string>
+    <string name="reminder_removed_toast">Erinnerung entfernt</string>
+    <string name="reminder_current_fmt">Aktuelle Erinnerung: %1$s</string>
+    <string name="notif_channel_reminders">Notiz-Erinnerungen</string>
+    <string name="notif_ask_body">Soll eine Notiz Sie rechtzeitig erinnern — etwa die Einkaufsliste vor dem Losgehen? Erlauben Sie Benachrichtigungen, dann können Sie für jede Notiz eine Erinnerung einstellen.</string>
+    <string name="notif_ask_allow">Erlauben</string>
+    <string name="notif_ask_later">Nicht jetzt</string>
+    <string name="reminder_invalid">Dieses Datum oder diese Uhrzeit ist ungültig</string>
+    <string name="reminder_notif_needed">Benachrichtigungen sind aus, daher kann noch keine Erinnerung eingestellt werden. Schalten Sie sie ein, und diese Notiz meldet sich pünktlich.</string>
+    <string name="reminder_notif_enable">Benachrichtigungen einschalten</string>
+    <string name="reminder_notif_settings">Einstellungen öffnen</string>
+    <string name="reminder_not_set_toast">Erinnerung nicht eingestellt — Benachrichtigungen sind aus</string>
 </resources>

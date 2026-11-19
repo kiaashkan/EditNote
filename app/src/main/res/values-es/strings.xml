@@ -155,4 +155,24 @@
     <string name="reload_msg">Los cambios sin guardar de esta pestaña se perderán.</string>
     <string name="replace_btn">Reemplazar</string>
     <string name="language">Idioma</string>
+
+    <!-- Item 110: note reminders -->
+    <string name="menu_reminder">Recordatorio</string>
+    <string name="reminder_title">Recordatorio de la nota</string>
+    <string name="reminder_set">Establecer</string>
+    <string name="reminder_remove">Quitar recordatorio</string>
+    <string name="reminder_save_first">Guarda primero el archivo para poner un recordatorio</string>
+    <string name="reminder_past">Esa hora ya pasó</string>
+    <string name="reminder_set_toast_fmt">Recordatorio establecido para %1$s</string>
+    <string name="reminder_removed_toast">Recordatorio eliminado</string>
+    <string name="reminder_current_fmt">Recordatorio actual: %1$s</string>
+    <string name="notif_channel_reminders">Recordatorios de notas</string>
+    <string name="notif_ask_body">¿Quieres que una nota te avise a tiempo, como la lista de la compra antes de salir? Permite las notificaciones y podrás poner un recordatorio en cualquier nota.</string>
+    <string name="notif_ask_allow">Permitir</string>
+    <string name="notif_ask_later">Ahora no</string>
+    <string name="reminder_invalid">Esa fecha u hora no es válida</string>
+    <string name="reminder_notif_needed">Las notificaciones están desactivadas, así que aún no se puede poner un recordatorio. Actívalas y esta nota te avisará justo a tiempo.</string>
+    <string name="reminder_notif_enable">Activar notificaciones</string>
+    <string name="reminder_notif_settings">Abrir ajustes</string>
+    <string name="reminder_not_set_toast">Recordatorio no establecido: notificaciones desactivadas</string>
 </resources>
